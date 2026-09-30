@@ -292,12 +292,12 @@ const sanitizeModelRefs = (...args) => settingsNormalizationRuntime.sanitizeMode
 const sanitizeSkillCatalogs = (...args) => settingsNormalizationRuntime.sanitizeSkillCatalogs(...args);
 const sanitizeProjects = (...args) => settingsNormalizationRuntime.sanitizeProjects(...args);
 
-// Every OpenChamber-owned file and folder hangs off one root: the default
-// `~/.config/openchamber`, or `OPENCHAMBER_DATA_DIR` when set. The user
-// folders (`projects/`, `themes/`, `speech-models/`) are copied into a custom
-// root once at startup (`migrateLegacyUserDirs`), because they used to ignore
-// the variable.
-const OPENCHAMBER_DEFAULT_CONFIG_ROOT = path.join(os.homedir(), '.config', 'openchamber');
+// Every OpenChamber-owned file and folder hangs off one root: the fork's
+// default `~/.config/noboopenchamber`, or `OPENCHAMBER_DATA_DIR` when set. The
+// user folders (`projects/`, `themes/`, `speech-models/`) are copied into a
+// custom root once at startup (`migrateLegacyUserDirs`), because they used to
+// ignore the variable.
+const OPENCHAMBER_DEFAULT_CONFIG_ROOT = path.join(os.homedir(), '.config', 'noboopenchamber');
 const OPENCHAMBER_USER_CONFIG_ROOT = process.env.OPENCHAMBER_DATA_DIR
   ? path.resolve(process.env.OPENCHAMBER_DATA_DIR)
   : OPENCHAMBER_DEFAULT_CONFIG_ROOT;

@@ -208,7 +208,7 @@ function normalizeServerUrlForConnection(value) {
 function getOpenChamberDataDir() {
   return process.env.OPENCHAMBER_DATA_DIR
     ? path.resolve(process.env.OPENCHAMBER_DATA_DIR)
-    : path.join(os.homedir(), '.config', 'openchamber');
+    : path.join(os.homedir(), '.config', 'noboopenchamber');
 }
 
 async function displayTunnelQrCode(url) {

@@ -2,8 +2,8 @@
   "name": "@openchamber/electron",
   "version": "2.0.4",
   "private": true,
-  "description": "Electron desktop runtime for OpenChamber",
-  "author": "OpenChamber",
+  "description": "Electron desktop runtime for noboopenchamber (fork of OpenChamber)",
+  "author": "thenobody0817",
   "type": "module",
   "main": "./dist-bundle/entry.mjs",
   "opencodeCli": {
@@ -56,8 +56,8 @@
     "lint": "node -e \"process.exit(0)\""
   },
   "build": {
-    "appId": "dev.openchamber.desktop",
-    "productName": "OpenChamber",
+    "appId": "dev.noboopenchamber.desktop",
+    "productName": "NoboOpenChamber",
     "asarUnpack": [
       "node_modules/@openchamber/web/server/built-in-extensions/**/*"
     ],
@@ -128,14 +128,14 @@
       ],
       "category": "Development",
       "icon": "resources/icons/app-icon.svg",
-      "executableName": "openchamber",
+      "executableName": "noboopenchamber",
       "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
       "desktop": {
         "entry": {
-          "Name": "OpenChamber",
-          "Comment": "Desktop runtime for OpenChamber",
-          "Icon": "openchamber",
-          "StartupWMClass": "openchamber"
+          "Name": "noboopenchamber",
+          "Comment": "Fork of OpenChamber — desktop runtime for OpenCode",
+          "Icon": "noboopenchamber",
+          "StartupWMClass": "noboopenchamber"
         }
       }
     },
@@ -172,8 +172,8 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "openchamber",
-      "repo": "openchamber"
+      "owner": "thenobody0817",
+      "repo": "noboopenchamber"
     }
   }
 }
