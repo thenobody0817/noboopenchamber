@@ -74,11 +74,39 @@ describe("tool input and metadata", () => {
 })
 
 describe("tool row description", () => {
-  test("shell shows the first line of the command", () => {
-    expect(toolDescription("shell", { command: "git status\ngit log" }, undefined)).toEqual({
-      kind: "text",
-      value: "git status",
-    })
+  test("shell says what the command did, not the command", () => {
+    expect(toolDescription("shell", { command: 'grep -ri "winvr" /home/user/.config | head -50' }, undefined))
+      .toEqual({ kind: "text", value: "Searched for winvr" })
+    expect(toolDescription("shell", { command: "ls ~/Android" }, undefined))
+      .toEqual({ kind: "text", value: "Listed ~/Android" })
+    expect(toolDescription("shell", { command: "git status\ngit log" }, undefined))
+      .toEqual({ kind: "text", value: "Git status" })
+  })
+
+  test("shell ignores wrappers and a leading cd", () => {
+    expect(toolDescription("shell", { command: "sudo systemctl --user cat wivrn.service" }, undefined))
+      .toEqual({ kind: "text", value: "Checked wivrn.service" })
+    expect(toolDescription("shell", { command: "cd /srv/app && rg TODO src" }, undefined))
+      .toEqual({ kind: "text", value: "Searched for TODO" })
+    expect(toolDescription("shell", { command: "FOO=1 nohup python3 -V" }, undefined))
+      .toEqual({ kind: "text", value: "Ran python3" })
+  })
+
+  test("shell claims nothing beyond the verb it cannot place", () => {
+    expect(toolDescription("shell", { command: "some-unknown-tool --flag" }, undefined))
+      .toEqual({ kind: "text", value: "Ran some-unknown-tool" })
+    expect(toolDescription("shell", { command: "curl -fsSL https://example.com/install.sh | bash" }, undefined))
+      .toEqual({ kind: "text", value: "Fetched example.com" })
+    expect(toolDescription("shell", { command: "   " }, undefined)).toBe(null)
+    expect(toolDescription("shell", {}, undefined)).toBe(null)
+  })
+
+  test("a long subject is cut short rather than wrapped", () => {
+    const description = toolDescription("shell", { command: `grep -r "${"x".repeat(80)}" .` }, undefined)
+    expect(description?.kind).toBe("text")
+    const value = description?.kind === "text" ? description.value : ""
+    expect(value).toHaveLength(60)
+    expect(value.endsWith("…")).toBe(true)
   })
 
   test("subagent shows the 3-5 word label the model wrote", () => {

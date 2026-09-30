@@ -341,6 +341,199 @@ function describeExecute(calls: ExecuteToolCall[], code: string | undefined): To
 }
 
 /**
+ * Words a row can say about a command, keyed by the command's own first word.
+ *
+ * This is a heuristic by construction and is meant to read as one: it looks at
+ * the first command of the line, ignores wrappers (`sudo`, `env A=1`, a
+ * leading `cd`), and says only what that command plainly did. Anything it does
+ * not recognise falls back to `Ran <word>`, which claims nothing beyond the
+ * verb the user can see anyway.
+ */
+const SHELL_TOKEN = /"(?:[^"\\]|\\.)*"|'[^']*'|[^\s]+/g
+const SHELL_ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
+const SHELL_WRAPPERS = new Set(["sudo", "doas", "command", "builtin", "exec", "nohup", "time", "timeout"])
+/** How much of a derived phrase a row shows before it is cut short. */
+const MAX_SHELL_SUMMARY_LENGTH = 60
+
+const shellTokens = (line: string): string[] => line.match(SHELL_TOKEN) ?? []
+const shellUnquote = (token: string): string => token.replace(/^["']|["']$/g, "")
+const shellIsFlag = (token: string): boolean => token.startsWith("-") && token !== "-"
+const shellBasename = (token: string): string => token.replace(/^.*[\\/]/, "")
+
+/** The command's first argument that is neither a flag nor an environment assignment. */
+const shellSubject = (args: string[]): string | undefined =>
+  args.find((token) => !shellIsFlag(token) && !SHELL_ENV_ASSIGNMENT.test(token))
+
+function shellHost(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "")
+  } catch {
+    return "a URL"
+  }
+}
+
+function describeShellVerb(verb: string, args: string[]): string | null {
+  const subject = shellSubject(args)
+
+  switch (verb) {
+    case "grep":
+    case "rg":
+    case "ag":
+    case "ack":
+    case "ugrep":
+      return subject ? `Searched for ${subject}` : "Searched files"
+
+    case "find":
+    case "fd":
+    case "locate":
+      return subject ? `Found files matching ${subject}` : "Found files"
+
+    case "ls":
+    case "eza":
+    case "exa":
+    case "tree":
+    case "dir":
+      return subject ? `Listed ${subject}` : "Listed files"
+
+    case "cat":
+    case "bat":
+    case "head":
+    case "tail":
+    case "less":
+    case "more":
+      return subject ? `Read ${subject}` : "Read a file"
+
+    case "git":
+      return subject ? `Git ${subject}` : "Git"
+
+    case "systemctl": {
+      const unit = args.find((token) => /\.(service|socket|timer|target|mount|path)$/.test(token)) ?? subject
+      return unit ? `Checked ${unit}` : "Checked a service"
+    }
+
+    case "journalctl":
+      return "Read the logs"
+
+    case "pacman":
+    case "yay":
+    case "paru":
+    case "pamac":
+      return args.some((token) => token.startsWith("-S")) ? "Installed packages" : "Checked packages"
+
+    case "ps":
+    case "pgrep":
+    case "pidof":
+    case "top":
+    case "htop":
+      return "Checked running processes"
+
+    case "ss":
+    case "lsof":
+    case "netstat":
+      return "Checked network state"
+
+    case "curl":
+    case "wget": {
+      const url = args.find((token) => /^https?:\/\//.test(token))
+      return url ? `Fetched ${shellHost(url)}` : "Fetched a URL"
+    }
+
+    case "mkdir":
+    case "touch":
+    case "cp":
+    case "mv":
+    case "ln":
+    case "chmod":
+    case "chown":
+      return "Changed files"
+
+    case "rm":
+    case "rmdir":
+    case "unlink":
+      return "Removed files"
+
+    case "df":
+    case "du":
+    case "free":
+    case "lsblk":
+      return "Checked disk usage"
+
+    case "which":
+    case "type":
+    case "whereis":
+    case "env":
+    case "printenv":
+      return "Checked the environment"
+
+    case "uname":
+    case "hostnamectl":
+    case "lscpu":
+    case "lspci":
+    case "lsusb":
+    case "nvidia-smi":
+      return "Checked the system"
+
+    case "docker":
+    case "podman":
+    case "kubectl":
+      return subject ? `Checked ${shellBasename(subject)}` : "Checked containers"
+
+    case "kill":
+    case "pkill":
+    case "killall":
+      return "Stopped a process"
+
+    case "echo":
+    case "printf":
+      return "Wrote output"
+
+    case "cd":
+    case "pwd":
+      return "Checked the working directory"
+
+    case "sleep":
+      return "Waited"
+
+    default:
+      return null
+  }
+}
+
+/**
+ * What a shell call did, instead of the command that did it.
+ *
+ * OpenCode v2 shell parts carry no title, so a row used to show the command's
+ * first line: exact, but a hundred characters of flags and paths the reader has
+ * to parse to learn that a file was searched. The command's own verb already
+ * answers that, so the row says "Searched for winvr" and the expanded body
+ * still shows the command in full.
+ */
+function describeShell(command: string | undefined): ToolDescription | null {
+  const line = command?.split("\n")[0]?.trim() ?? ""
+  if (!line) return null
+
+  const tokens = shellTokens(line).map(shellUnquote)
+  let index = 0
+  for (;;) {
+    while (index < tokens.length && (SHELL_WRAPPERS.has(tokens[index]) || SHELL_ENV_ASSIGNMENT.test(tokens[index]))) {
+      index += 1
+    }
+    // `cd somewhere && ...` is one thought; describe what follows it.
+    if (tokens[index] === "cd" && tokens[index + 2] === "&&") {
+      index += 3
+      continue
+    }
+    break
+  }
+
+  const verb = shellBasename(tokens[index] ?? "").toLowerCase()
+  if (!verb) return null
+
+  const value = describeShellVerb(verb, tokens.slice(index + 1)) ?? `Ran ${verb}`
+  return { kind: "text", value: value.length > MAX_SHELL_SUMMARY_LENGTH ? `${value.slice(0, MAX_SHELL_SUMMARY_LENGTH - 1)}…` : value }
+}
+
+/**
  * Derives the row description from v2 data alone: no state carries a title any
  * more, so every tool answers from its own input, falling back to the per-tool
  * result metadata and finally to a generic `description` field for MCP tools.
@@ -355,7 +548,7 @@ export function toolDescription(
 
   switch (name) {
     case OPENCODE_TOOLS.shell:
-      return parsed.command ? { kind: "text", value: parsed.command.split("\n")[0].slice(0, MAX_COMMAND_LENGTH) } : null
+      return describeShell(parsed.command)
 
     case OPENCODE_TOOLS.execute:
       return describeExecute(executeToolCalls(metadata), parsed.code)
