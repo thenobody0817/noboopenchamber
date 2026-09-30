@@ -1,0 +1,129 @@
+# The fork's own release path.
+#
+# Upstream's `.github/workflows/release.yml` is disabled on this repository: it
+# targets Blacksmith runners and signing/notarization secrets a fork does not
+# have, and it fires on the same `v*` tags, so a tag here would only produce a
+# red X. This workflow is deliberately a separate file rather than an edit of
+# that one, so merging upstream never conflicts on CI.
+#
+# It builds the x64 AppImage, verifies it the same way upstream does, and
+# publishes the artifact together with `latest-linux.yml` — that manifest is
+# what makes the app's own updater follow this repository instead of
+# openchamber/openchamber.
+name: Release Linux
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and verify without publishing a release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  # electron-builder packages natively for the host architecture.
+  OPENCHAMBER_TARGET_ARCH: x64
+  ARTIFACT_ARCH: x86_64
+
+jobs:
+  linux-x64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Resolve version
+        id: version
+        run: |
+          # The version always comes from package.json: the fork tags with its
+          # own suffix (`v2.0.4-nobo1`) so it never collides with an upstream
+          # tag of the same name, while the AppImage and update manifest keep
+          # the plain version electron-builder stamped into the package.
+          version=$(node -p "require('./packages/electron/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building noboopenchamber $version"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Get bundled OpenCode CLI version
+        id: opencode_cli
+        run: |
+          version=$(node -p "require('./packages/electron/package.json').opencodeCli.version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache bundled OpenCode CLI
+        uses: actions/cache@v4
+        with:
+          path: packages/electron/.cache/opencode-cli
+          key: opencode-cli-linux-x64-${{ steps.opencode_cli.outputs.version }}
+
+      - name: Run focused Electron release tests
+        working-directory: packages/electron
+        run: |
+          bun run test:architecture
+          bun run test:updater
+
+      - name: Run the fork's UI tests
+        working-directory: packages/ui
+        run: bun test src/lib/opencode/tools.test.ts
+
+      - name: Build and package Linux AppImage
+        working-directory: packages/electron
+        run: |
+          set -euo pipefail
+          bun run build:web-assets
+          bun run prepare:opencode-cli
+          bun run verify:opencode-cli
+          bun run bundle:main
+          bun run rebuild:native
+          node ./scripts/package.mjs --linux --x64 --publish=never
+          bun run verify:opencode-cli:packaged
+          bun run verify:linux-appimage
+
+      - name: Validate Linux update manifest
+        working-directory: packages/electron
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARTIFACT_ARCH: ${{ env.ARTIFACT_ARCH }}
+        run: |
+          set -euo pipefail
+          appimage="dist/NoboOpenChamber-${VERSION}-linux-${ARTIFACT_ARCH}.AppImage"
+          test -f "$appimage"
+          node ./scripts/verify-update-manifest.mjs dist/latest-linux.yml "$appimage" "$VERSION"
+
+      - name: Upload build to the workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: noboopenchamber-linux-x64
+          path: |
+            packages/electron/dist/NoboOpenChamber-*-linux-x86_64.AppImage
+            packages/electron/dist/latest-linux.yml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish release assets
+        if: ${{ github.event_name == 'push' && inputs.dry_run != true }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: noboopenchamber ${{ steps.version.outputs.version }} (${{ github.ref_name }})
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            packages/electron/dist/NoboOpenChamber-*-linux-x86_64.AppImage
+            packages/electron/dist/latest-linux.yml
