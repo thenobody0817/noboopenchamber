@@ -1,0 +1,142 @@
+{
+  "metadata": {
+    "id": "omarchy-dark",
+    "name": "Omarchy - everforest",
+    "variant": "dark",
+    "description": "Follows the active Omarchy desktop theme",
+    "version": "1.0.0",
+    "author": "Omarchy",
+    "tags": [
+      "dark",
+      "omarchy",
+      "desktop"
+    ]
+  },
+  "colors": {
+    "primary": {
+      "base": "#7fbbb3",
+      "hover": "#8ec3bc",
+      "active": "#9bcac4",
+      "foreground": "#2d353b",
+      "muted": "#7fbbb380"
+    },
+    "surface": {
+      "background": "#2d353b",
+      "foreground": "#d3c6aa",
+      "muted": "#21272c",
+      "mutedForeground": "#475258",
+      "elevated": "#343f44",
+      "overlay": "#00000080",
+      "subtle": "#181d20"
+    },
+    "interactive": {
+      "border": "#3d484d",
+      "selection": "#3d484d2b",
+      "borderHover": "#d3c6aa",
+      "focusRing": "#7fbbb355",
+      "hover": "#ffffff12",
+      "active": "#ffffff1f"
+    },
+    "status": {
+      "error": "#e67e80",
+      "errorForeground": "#2d353b",
+      "errorBackground": "#e67e8020",
+      "errorBorder": "#e67e8050",
+      "warning": "#dbbc7f",
+      "warningForeground": "#2d353b",
+      "warningBackground": "#e09d7f20",
+      "warningBorder": "#e09d7f50",
+      "success": "#a7c080",
+      "successForeground": "#2d353b",
+      "successBackground": "#a7c08020",
+      "successBorder": "#a7c08050",
+      "info": "#7fbbb3",
+      "infoForeground": "#2d353b",
+      "infoBackground": "#7fbbb320",
+      "infoBorder": "#7fbbb350"
+    },
+    "syntax": {
+      "base": {
+        "background": "#21272c",
+        "comment": "#475258",
+        "keyword": "#7fbbb3",
+        "string": "#a7c080",
+        "number": "#d699b6",
+        "function": "#dbbc7f",
+        "variable": "#d3c6aa",
+        "type": "#83c092",
+        "operator": "#e67e80"
+      },
+      "tokens": {
+        "commentDoc": "#475258",
+        "stringEscape": "#d3c6aa",
+        "method": "#a7c080",
+        "variableProperty": "#83c092",
+        "variableOther": "#a7c080",
+        "variableGlobal": "#d699b6",
+        "variableLocal": "#181d20",
+        "constant": "#d3c6aa",
+        "className": "#dbbc7f",
+        "typeParameter": "#dbbc7f",
+        "jsxTag": "#d699b6",
+        "tagAttribute": "#e09d7f",
+        "boolean": "#e09d7f",
+        "decorator": "#e09d7f",
+        "label": "#d699b6",
+        "preprocessor": "#d699b6",
+        "url": "#7fbbb3",
+        "key": "#7fbbb3",
+        "exception": "#d699b6",
+        "punctuation": "#475258"
+      },
+      "highlights": {
+        "diffAdded": "#a7c080",
+        "diffRemoved": "#e67e80",
+        "diffModified": "#83c092",
+        "lineNumber": "#5f605c"
+      }
+    },
+    "pr": {
+      "open": "#a7c080",
+      "draft": "#475258",
+      "blocked": "#e67e80",
+      "merged": "#d699b6"
+    },
+    "chat": {
+      "userMessageBackground": "#343f44",
+      "divider": "#3d484d"
+    },
+    "markdown": {
+      "link": "#7fbbb3",
+      "linkHover": "#7fbbb3",
+      "inlineCode": "#a7c080",
+      "inlineCodeBackground": "#343f44",
+      "blockquote": "#475258",
+      "blockquoteBorder": "#3d484d",
+      "listMarker": "#7fbbb399"
+    },
+    "tools": {
+      "border": "#3d484d99",
+      "icon": "#475258",
+      "title": "#d3c6aa",
+      "description": "#475258",
+      "edit": {
+        "addedBackground": "#a7c08025",
+        "removedBackground": "#e67e8025",
+        "lineNumber": "#5f605c"
+      }
+    }
+  },
+  "config": {
+    "fonts": {
+      "sans": "\"JetBrainsMono Nerd Font\", monospace",
+      "mono": "\"JetBrainsMono Nerd Font\", monospace",
+      "heading": "\"JetBrainsMono Nerd Font\", monospace"
+    },
+    "transitions": {
+      "fast": "150ms ease",
+      "normal": "250ms ease",
+      "slow": "350ms ease"
+    }
+  }
+}

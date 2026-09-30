@@ -1,0 +1,115 @@
+{
+  "desktopSplashColors": {
+    "bgLight": "#2d353b",
+    "fgLight": "#d3c6aa",
+    "bgDark": "#2d353b",
+    "fgDark": "#d3c6aa"
+  },
+  "openInAppId": "terminal",
+  "permissionAutoAccept": {},
+  "desktopLanAccessEnabled": false,
+  "lightThemeId": "omarchy-light",
+  "darkThemeId": "omarchy-dark",
+  "notifyOnSubtasks": true,
+  "notifyOnCompletion": true,
+  "notifyOnError": true,
+  "notifyOnQuestion": true,
+  "notificationTemplates": {
+    "completion": {
+      "title": "{agent_name} is ready",
+      "message": "{model_name} completed the task"
+    },
+    "error": {
+      "title": "Tool error",
+      "message": "{last_message}"
+    },
+    "question": {
+      "title": "Input needed",
+      "message": "{last_message}"
+    },
+    "subtask": {
+      "title": "{agent_name} is ready",
+      "message": "{model_name} completed the task"
+    }
+  },
+  "favoriteModels": [
+    {
+      "providerID": "deepseek",
+      "modelID": "deepseek-flash"
+    }
+  ],
+  "recentModels": [
+    {
+      "providerID": "deepseek",
+      "modelID": "deepseek-flash"
+    },
+    {
+      "providerID": "opencode",
+      "modelID": "big-pickle"
+    },
+    {
+      "providerID": "opencode-go",
+      "modelID": "longcat-2.5-preview-free"
+    },
+    {
+      "providerID": "opencode-go",
+      "modelID": "kimi-k2.7-code"
+    },
+    {
+      "providerID": "opencode-go",
+      "modelID": "space-bunny-free"
+    }
+  ],
+  "hiddenModels": [],
+  "collapsedModelProviders": [],
+  "recentAgents": [
+    "plan",
+    "build"
+  ],
+  "recentEfforts": {
+    "deepseek/deepseek-flash": [
+      "default"
+    ],
+    "openai/gpt-6-astra": [
+      "default"
+    ],
+    "opencode-go/kimchi-auto": [
+      "default"
+    ]
+  },
+  "workStatusPanelEnabled": false,
+  "themeVariant": "dark",
+  "themeId": "omarchy-dark",
+  "useSystemTheme": false,
+  "uiFont": "system",
+  "monoFont": "system-mono",
+  "draftStarters": [
+    {
+      "type": "command",
+      "name": "catch-up"
+    },
+    {
+      "type": "command",
+      "name": "weigh"
+    },
+    {
+      "type": "command",
+      "name": "plan-feature"
+    },
+    {
+      "type": "command",
+      "name": "craft-goal"
+    },
+    {
+      "type": "command",
+      "name": "schedule-task"
+    },
+    {
+      "type": "command",
+      "name": "review"
+    }
+  ],
+  "draftStartersCraftGoalAdded": true,
+  "draftStartersScheduleTaskAdded": true,
+  "showDeletionDialog": false
+}

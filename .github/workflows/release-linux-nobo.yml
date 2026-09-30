@@ -106,6 +106,11 @@ jobs:
           test -f "$appimage"
           node ./scripts/verify-update-manifest.mjs dist/latest-linux.yml "$appimage" "$VERSION"
 
+      - name: Package the profile bundle
+        run: |
+          set -euo pipefail
+          tar -czf packages/electron/dist/nobo-profile.tar.gz -C nobo-profile .
+
       - name: Upload build to the workflow run
         uses: actions/upload-artifact@v4
         with:
@@ -113,6 +118,7 @@ jobs:
           path: |
             packages/electron/dist/NoboOpenChamber-*-linux-x86_64.AppImage
             packages/electron/dist/latest-linux.yml
+            packages/electron/dist/nobo-profile.tar.gz
           if-no-files-found: error
           retention-days: 7
 
@@ -127,3 +133,4 @@ jobs:
           files: |
             packages/electron/dist/NoboOpenChamber-*-linux-x86_64.AppImage
             packages/electron/dist/latest-linux.yml
+            packages/electron/dist/nobo-profile.tar.gz
