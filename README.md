@@ -1,5 +1,15 @@
 # <picture><source media="(prefers-color-scheme: dark)" srcset="docs/references/badges/openchamber-logo-dark.svg"><img src="docs/references/badges/openchamber-logo-light.svg" width="32" height="32" align="absmiddle" /></picture> OpenChamber
 
+<!-- noboopenchamber fork: this banner is the only local change in this file.
+     Keep it short so a merge conflict here stays a one-line decision. -->
+
+> **This is noboopenchamber**, an unofficial fork of OpenChamber. Shell tool
+> rows read as sentences, the app has its own identity and data directory, and
+> it updates from this repository. Install:
+> `curl -fsSL https://raw.githubusercontent.com/thenobody0817/noboopenchamber/nobo/scripts/install-nobo.sh | bash`
+> — see [FORK.md](./FORK.md) for what differs and how it tracks upstream.
+> Everything below is upstream's own README.
+
 [![GitHub stars](https://img.shields.io/github/stars/openchamber/openchamber?style=flat&labelColor=100F0F&color=66800B)](https://github.com/openchamber/openchamber/stargazers)
 [![GitHub release](https://img.shields.io/github/v/release/openchamber/openchamber?style=flat&labelColor=100F0F&color=205EA6)](https://github.com/openchamber/openchamber/releases/latest)
 [![Discord](https://img.shields.io/badge/Discord-join.svg?style=flat&labelColor=100F0F&color=8B7EC8&logo=discord&logoColor=FFFCF0)](https://discord.gg/ZYRSdnwwKA)
