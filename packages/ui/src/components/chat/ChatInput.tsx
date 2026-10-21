@@ -72,7 +72,7 @@ import { toast } from '@/components/ui';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { useTabletLayout } from '@/lib/device';
 import { useHardwareKeyboard } from '@/lib/hardwareKeyboard';
-import { isCapacitorApp } from '@/lib/platform';
+import { getClientPlatform, isCapacitorApp } from '@/lib/platform';
 import { isIMECompositionEvent } from '@/lib/ime';
 import { getCycledPrimaryAgentName, type MobileControlsPanel } from './mobileControlsUtils';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
@@ -189,6 +189,8 @@ import {
     MobileDraftTargetSheets,
     MobileDraftTargetTriggers,
 } from './composer/ui/DraftTargetSelectors';
+import { MobileCameraSession } from './composer/ui/MobileCameraSession';
+import { useCameraSnapshots } from './composer/ui/useCameraSnapshots';
 import { NewSpaceDialog } from '@/components/session/spaces/NewSpaceDialog';
 import { isSpaceCreationRequest } from '@/lib/spaces/space-creation';
 import { spaceModelRefusal } from '@/lib/spaces/space-model-access';
@@ -2681,10 +2683,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
      * cited only once they attached, so a rejected file leaves no dangling
      * citation.
      */
+    /**
+     * Attaches files and cites them by name. Returns the image filenames that were
+     * *actually* attached, so a caller that needs to talk about them (the camera
+     * snapshot session) keys its text to the same names rather than guessing: a
+     * refused or deduplicated attachment reports nothing rather than a name the
+     * model will never see.
+     */
     const attachFilesWithCitation = React.useCallback(async (
         files: File[],
         leadingText: string = '',
-    ): Promise<void> => {
+    ): Promise<string[]> => {
         const attachmentDraftKey = useInputStore.getState().attachmentDraftKey;
         const imageFiles = files.filter((file) => file.type.startsWith('image/'));
         const otherFiles = files.filter((file) => !file.type.startsWith('image/'));
@@ -2713,20 +2722,24 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         );
         insertCitation(assignedImageNames, leadingText);
 
+        const attachedImageNames: string[] = [];
         let attached = false;
         for (let index = 0; index < imageFiles.length; index += 1) {
             const filename = assignedImageNames[index];
             const file = renameFileForAttachmentCitation(imageFiles[index], filename);
             pendingPastedAttachmentFilenamesRef.current.add(filename);
             try {
-                attached = (await addAttachedFile(file)) || attached;
+                if (await addAttachedFile(file)) {
+                    attached = true;
+                    attachedImageNames.push(filename);
+                }
             } catch (error) {
                 console.error('Clipboard image attach failed', error);
                 toast.error(error instanceof Error ? error.message : t('chat.chatInput.toast.clipboardAttachFailed'));
             } finally {
                 pendingPastedAttachmentFilenamesRef.current.delete(filename);
             }
-            if (useInputStore.getState().attachmentDraftKey !== attachmentDraftKey) return;
+            if (useInputStore.getState().attachmentDraftKey !== attachmentDraftKey) return attachedImageNames;
         }
 
         const attachedOtherNames: string[] = [];
@@ -2739,13 +2752,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             } catch (error) {
                 console.error('File attach failed', error);
             }
-            if (useInputStore.getState().attachmentDraftKey !== attachmentDraftKey) return;
+            if (useInputStore.getState().attachmentDraftKey !== attachmentDraftKey) return attachedImageNames;
         }
         insertCitation(attachedOtherNames, '');
 
         if (files.length > 0 && !attached) {
             toast.error(t('chat.chatInput.toast.attachFileFailed'));
         }
+        return attachedImageNames;
     }, [addAttachedFile, insertTextAtSelection, t]);
 
     const handlePaste = React.useCallback(async (event: ClipboardEvent) => {
@@ -3293,6 +3307,34 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     };
 
     const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+    // Camera snapshots (Android only). The session opens a native CameraX
+    // viewfinder, then hands each photo back for a note before attaching. Photos
+    // go through the composer's own attach path so they are cited by name and
+    // obey the same draft rules as a pasted image; the notes need the caret
+    // helper to land where the user left it.
+    const cameraSnapshots = useCameraSnapshots({
+        enabled: isMobile && getClientPlatform() === 'android',
+        attachPhotos: React.useCallback(
+            (files: File[]) => attachFilesWithCitation(files),
+            [attachFilesWithCitation],
+        ),
+        insertText: React.useCallback((text: string) => {
+            const editor = composerRef.current;
+            const currentMessage = editor?.getValue() ?? messageRef.current;
+            const selectionStart = editor?.getSelection().start ?? currentMessage.length;
+            const selectionEnd = editor?.getSelection().end ?? currentMessage.length;
+            const insertionText = withInlineInsertionBoundaries(
+                text,
+                currentMessage.slice(0, selectionStart),
+                currentMessage.slice(selectionEnd),
+            );
+            insertTextAtSelection(
+                insertionText,
+                getFileMentionInputSourceForInsertedText(insertionText),
+            );
+        }, [insertTextAtSelection]),
+    });
 
     const attachFiles = React.useCallback(async (files: FileList | File[]) => {
         const attachmentDraftKey = useInputStore.getState().attachmentDraftKey;
@@ -4290,6 +4332,22 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         <Icon name="attachment-2" className="h-[18px] w-[18px] flex-shrink-0 text-muted-foreground" />
                         {t('chat.chatInput.actions.attachFiles')}
                     </button>
+                    {cameraSnapshots.available ? (
+                        <button
+                            type="button"
+                            className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 py-3 text-left typography-ui-label hover:bg-[var(--interactive-hover)]"
+                            onClick={() => {
+                                // The native CameraX viewfinder takes over next, same
+                                // hand-off concern as the file picker above.
+                                mobileShell.skipNextOverlayCloseRestore();
+                                setMobileAttachMenuOpen(false);
+                                requestAnimationFrame(cameraSnapshots.open);
+                            }}
+                        >
+                            <Icon name="camera" className="h-[18px] w-[18px] flex-shrink-0 text-muted-foreground" />
+                            {t('chat.chatInput.actions.takePhoto')}
+                        </button>
+                    ) : null}
                     <button
                         type="button"
                         className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 py-3 text-left typography-ui-label hover:bg-[var(--interactive-hover)]"
@@ -4333,6 +4391,19 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 </div>
             </MobileOverlayPanel>
         ) : null}
+
+        {/* Camera snapshots: the comment step for photos the native viewfinder
+            captured. Renders in its own portal above the composer. */}
+        <MobileCameraSession
+            open={cameraSnapshots.active && cameraSnapshots.snapshots.length > 0}
+            snapshots={cameraSnapshots.snapshots}
+            activeIndex={cameraSnapshots.activeIndex}
+            onActiveIndexChange={cameraSnapshots.setActiveIndex}
+            onNoteChange={cameraSnapshots.setNote}
+            onSnapAnother={cameraSnapshots.snapAnother}
+            onFinish={cameraSnapshots.finish}
+            onDismiss={cameraSnapshots.dismiss}
+        />
 
         {/* Mobile draft target pickers: bottom sheets replacing the inline
             project/branch Selects (which desktop keeps). */}

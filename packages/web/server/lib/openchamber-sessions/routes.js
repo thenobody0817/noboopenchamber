@@ -5,7 +5,7 @@ import {
   resolvePrimaryWorktreeRoot,
 } from '../git/index.js';
 import { expandSnippets } from '../opencode/snippets.js';
-import { AUTO_MODEL_REF, isAutoModel } from '../routing/defaults.js';
+import { AUTO_FREE_MODEL_REF, AUTO_MODEL_REF, sentinelModeOf } from '../routing/defaults.js';
 import { parseScheduledCommandPrompt } from '../scheduled-tasks/runtime.js';
 import { buildGoalIntroText, createSessionGoal } from '../session-goal/create.js';
 import { OpenChamberControlError, asControlError } from '../openchamber-control/error.js';
@@ -528,7 +528,8 @@ export const createOpenChamberSessionService = (dependencies) => {
     }
 
     const expandedPrompt = expandSnippets(prompt, directory);
-    if (isAutoModel(model)) {
+    const sentinelMode = sentinelModeOf(model);
+    if (sentinelMode) {
       // The sentinel must never reach OpenCode: neither the goal record nor the
       // session switch below may carry it.
       if (!resolveAutoSelection) {
@@ -537,7 +538,7 @@ export const createOpenChamberSessionService = (dependencies) => {
       const routed = await resolveAutoSelection({
         sessionId: sessionID,
         directory,
-        model: AUTO_MODEL_REF,
+        model: sentinelMode === 'free' ? AUTO_FREE_MODEL_REF : AUTO_MODEL_REF,
         agent: agent ?? null,
         requestText: expandedPrompt,
       });

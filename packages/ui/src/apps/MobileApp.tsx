@@ -81,6 +81,7 @@ import { reconnectAppForTransportSwitch, resetAppForRuntimeEndpointChange } from
 import { useAppFontEffects } from './useAppFontEffects';
 import { useFontsReady } from './useFontsReady';
 import { useDeepLinkHandlers, useDeepLinkSource } from './deepLinkNavigation';
+import { useIncomingShareSource } from './incomingShare';
 import { useEdgeSwipe } from './useEdgeSwipe';
 import { useNativePushRegistration } from './useNativePushRegistration';
 import { IpadSidebarResizeHandle } from './IpadSidebarResizeHandle';
@@ -1248,6 +1249,13 @@ function MobileAppContent({ apis }: MobileAppProps) {
   // cold-launch tap/open isn't lost on the connect/splash screen; intents stash until
   // the app is ready (connected + initialized) and shell handlers are registered.
   useDeepLinkSource({ ready: isNativeMobileApp && isConnected && isInitialized });
+  // Inbound Android shares (text, links, images, files) become composer content.
+  // Gated like the deep links, and additionally on the cold-launch session restore:
+  // that restore replaces whichever session was open last time, so a share typed
+  // into the auto-opened draft before it lands would be thrown away with it.
+  useIncomingShareSource({
+    ready: isNativeMobileApp && isConnected && isInitialized && !lastSessionRestorePending,
+  });
   const fontsReady = useFontsReady();
 
   // `isConnected` is a LIVE flag that flips false on every transient SSE/WS drop and

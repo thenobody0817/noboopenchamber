@@ -5,7 +5,7 @@ import { Window } from 'happy-dom';
 import { create } from 'zustand';
 import { ThemeSystemContext, type ThemeContextValue } from '@/contexts/theme-system-context';
 import { getThemeById } from '@/lib/theme/themes';
-import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, isAutoModel } from '@/lib/routing/autoModel';
+import { AUTO_FREE_MODEL_ID, AUTO_MODEL_ID, AUTO_PROVIDER_ID, isAutoModel } from '@/lib/routing/autoModel';
 import { useRoutingStore } from '@/stores/useRoutingStore';
 
 /**
@@ -595,6 +595,34 @@ describe('ModelControls effort restore', () => {
         for (const spy of [getSaved, getAgentSaved, saveModel]) spy.mockRestore();
         useSelectionStore.setState(selections);
         useRoutingStore.setState({ available: false, autoReady: false });
+      }
+    });
+  }
+
+  // Auto-free is offered on its own readiness: no classifier, no fallback, no
+  // categories. The two sentinels must not be able to hide one another.
+  for (const freeReady of [true, false]) {
+    test(`a saved Auto-free is ${freeReady ? 'restored' : 'dropped as stale'} by freeAutoReady alone`, async () => {
+      latestUserChoice = { id: 'msg-1', agent: AGENT, providerID: PROVIDER_ID, modelID: MODEL_ID, variant: undefined };
+      const selections = useSelectionStore.getState();
+      const free = { providerId: AUTO_PROVIDER_ID, modelId: AUTO_FREE_MODEL_ID };
+      const getSaved = spyOn(selections, 'getSessionModelSelection');
+      const getAgentSaved = spyOn(selections, 'getAgentModelForSession');
+      getSaved.mockReturnValue(free);
+      getAgentSaved.mockReturnValue(free);
+      // Auto is not ready here: only Auto-free is in play.
+      useRoutingStore.setState({ available: true, autoReady: false, freeAutoReady: freeReady });
+      const { cleanup } = await renderModelControls();
+      try {
+        const { currentProviderId, currentModelId } = useConfigStore.getState();
+        expect([currentProviderId, currentModelId]).toEqual(
+          freeReady ? [AUTO_PROVIDER_ID, AUTO_FREE_MODEL_ID] : [PROVIDER_ID, MODEL_ID],
+        );
+      } finally {
+        await cleanup();
+        for (const spy of [getSaved, getAgentSaved]) spy.mockRestore();
+        useSelectionStore.setState(selections);
+        useRoutingStore.setState({ available: false, autoReady: false, freeAutoReady: false });
       }
     });
   }

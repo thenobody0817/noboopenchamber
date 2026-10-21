@@ -56,6 +56,13 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+        // Camera snapshots. Same versions the ML Kit barcode scanner already
+        // resolves, so these bind to the artifacts already in the build graph
+        // rather than adding anything new to download.
+        implementation "androidx.camera:camera-core:1.5.2"
+        implementation "androidx.camera:camera-camera2:1.5.2"
+        implementation "androidx.camera:camera-lifecycle:1.5.2"
+        implementation "androidx.camera:camera-view:1.5.2"
     implementation project(':capacitor-cordova-android-plugins')
 }
 

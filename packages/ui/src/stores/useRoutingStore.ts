@@ -28,7 +28,7 @@ interface RoutingDecision {
   at: number;
   category: string | null;
   confidence: number;
-  reason: 'routed' | 'low-confidence' | 'unknown-category' | 'error' | 'not-ready';
+  reason: 'routed' | 'low-confidence' | 'unknown-category' | 'error' | 'not-ready' | 'free-pick';
   providerID?: string;
   modelID?: string;
   variant?: string | null;
@@ -44,7 +44,7 @@ interface RoutingStoreState extends RoutingState {
   load: () => Promise<void>;
   resetForRuntime: () => void;
   applyState: (state: RoutingState) => void;
-  applyAvailability: (state: { available: boolean; autoReady: boolean; jevAvailable: boolean; tokenPresent: boolean; jevSource: RoutingJevSource }) => void;
+  applyAvailability: (state: { available: boolean; autoReady: boolean; freeAutoReady?: boolean; jevAvailable: boolean; tokenPresent: boolean; jevSource: RoutingJevSource }) => void;
   recordDecision: (decision: RoutingDecision) => void;
   holdPermission: (held: RoutingHeldPermission) => void;
   releasePermission: (permissionId: string) => void;
@@ -93,8 +93,8 @@ export const useRoutingStore = create<RoutingStoreState>()((set, get) => ({
     set({ ...state, held: state.heldPermissions ? heldRecord(state.heldPermissions) : get().held, loaded: true, loadError: null });
   },
 
-  applyAvailability: ({ available, autoReady, jevAvailable, tokenPresent, jevSource }) => {
-    set({ available, autoReady, jevAvailable, tokenPresent, jevSource });
+  applyAvailability: ({ available, autoReady, freeAutoReady = false, jevAvailable, tokenPresent, jevSource }) => {
+    set({ available, autoReady, freeAutoReady, jevAvailable, tokenPresent, jevSource });
     // The config behind the change lives on the server; re-read rather than guess.
     if (available) void get().load();
   },
@@ -155,6 +155,9 @@ export const useRoutingStore = create<RoutingStoreState>()((set, get) => ({
 
 /** Whether the composer may offer the Auto row right now. */
 export const selectAutoReady = (state: RoutingStoreState): boolean => state.available && state.autoReady;
+
+/** Auto-free is offered whenever the server finds a free model, Jev or not. */
+export const selectFreeAutoReady = (state: RoutingStoreState): boolean => state.available && state.freeAutoReady;
 
 /** Whether the safety net can be offered: this runtime has a server and a classification provider answers. */
 export const selectSafetyNetAvailable = (state: RoutingStoreState): boolean => state.available && state.jevAvailable;

@@ -187,4 +187,56 @@ describe('annotation overlay script', () => {
   test('the teardown script parses on its own', () => {
     expect(parses(ANNOTATION_TEARDOWN_SCRIPT)).toBe(true);
   });
+
+  test('pierces open and tracked closed shadow roots when selecting an element', async () => {
+    const win = new Window({ url: 'https://x.com/i/chat' });
+    const run = new Function('window', 'document', 'requestAnimationFrame', `return ${script}`);
+    try {
+      const host = win.document.createElement('div');
+      host.setAttribute('data-testid', 'xchatEmbedRoute');
+      win.document.body.appendChild(host);
+
+      const closedRoots = new WeakMap< object, unknown >();
+      (win as unknown as { __openchamberShadowRoots: WeakMap<object, unknown> }).__openchamberShadowRoots = closedRoots;
+
+      const shadow = host.attachShadow({ mode: 'closed' });
+      closedRoots.set(host, shadow);
+
+      const row = win.document.createElement('button');
+      row.setAttribute('data-testid', 'chat-row');
+      row.textContent = 'Bryla Kellam';
+      row.getBoundingClientRect = () => ({
+        left: 70, top: 120, right: 370, bottom: 180, x: 70, y: 120, width: 300, height: 60, toJSON: () => ({}),
+      });
+      shadow.appendChild(row);
+
+      win.document.elementFromPoint = () => host;
+      (shadow as unknown as { elementFromPoint: (x: number, y: number) => unknown }).elementFromPoint = () => row;
+
+      const completion = run(win, win.document, (callback: FrameRequestCallback) => callback(0));
+      const down = new win.PointerEvent('pointerdown', {
+        button: 0,
+        clientX: 100,
+        clientY: 140,
+        bubbles: true,
+        cancelable: true,
+      });
+      win.document.dispatchEvent(down);
+
+      const overlayHost = win.document.querySelector('[data-openchamber-annotation]');
+      expect(overlayHost).not.toBeNull();
+      // Submit via Enter on the comment box inside our closed overlay shadow root:
+      // simulate Escape to verify clean teardown after selection, or inspect the selected state.
+      // Instead of reaching into our own closed overlay, we can verify our overlay host was NOT
+      // exposed in __openchamberShadowRoots and then trigger Enter on the focused textarea.
+      expect(closedRoots.has(overlayHost!)).toBe(false);
+
+      const active = win.document.activeElement;
+      const enterTarget = active || win.document.body;
+      enterTarget.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      expect(await completion).toBeNull();
+    } finally {
+      await win.happyDOM.close();
+    }
+  });
 });

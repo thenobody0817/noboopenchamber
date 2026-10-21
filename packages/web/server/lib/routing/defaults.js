@@ -13,17 +13,49 @@ import { z } from 'zod';
 
 const AUTO_PROVIDER_ID = 'openchamber';
 const AUTO_MODEL_ID = 'auto';
+/**
+ * The second sentinel: same fake provider, resolved by picking a free model at
+ * random instead of by asking Jev for a category. It exists so "surprise me,
+ * but never bill me" is one pick in the model list.
+ */
+const AUTO_FREE_MODEL_ID = 'auto-free';
 
 // v2 names a model `{ providerID, id }` (`Model.Ref`); OpenChamber's own stored
 // config and the message queue's send config name it `{ providerID, modelID }`.
-const autoModelSchema = z.object({ providerID: z.literal(AUTO_PROVIDER_ID), id: z.literal(AUTO_MODEL_ID) });
-const autoStoredModelSchema = z.object({ providerID: z.literal(AUTO_PROVIDER_ID), modelID: z.literal(AUTO_MODEL_ID) });
+const sentinelSchema = z.object({
+  providerID: z.literal(AUTO_PROVIDER_ID),
+  id: z.enum([AUTO_MODEL_ID, AUTO_FREE_MODEL_ID]),
+});
+const storedSentinelSchema = z.object({
+  providerID: z.literal(AUTO_PROVIDER_ID),
+  modelID: z.enum([AUTO_MODEL_ID, AUTO_FREE_MODEL_ID]),
+});
 
-export const isAutoModel = (model) => autoModelSchema.safeParse(model).success
-  || autoStoredModelSchema.safeParse(model).success;
+/**
+ * Which sentinel a model ref is, in either naming, or null when it is a real
+ * model. `'auto'` is Jev routing, `'free'` is the random free-model pick.
+ */
+export const sentinelModeOf = (model) => {
+  const id = sentinelSchema.safeParse(model).success ? model.id
+    : storedSentinelSchema.safeParse(model).success ? model.modelID
+      : null;
+  return id === AUTO_FREE_MODEL_ID ? 'free' : id === AUTO_MODEL_ID ? 'auto' : null;
+};
+
+/** Any sentinel, in either naming. What "is this an OpenChamber model" means. */
+export const isAutoModel = (model) => sentinelModeOf(model) !== null;
 
 /** The sentinel itself, in the v2 `Model.Ref` shape. */
 export const AUTO_MODEL_REF = { providerID: AUTO_PROVIDER_ID, id: AUTO_MODEL_ID };
+export const AUTO_FREE_MODEL_REF = { providerID: AUTO_PROVIDER_ID, id: AUTO_FREE_MODEL_ID };
+
+/**
+ * The provider Auto-free picks from. These models authenticate with a public
+ * key and need no credential from the user, which is what makes "free" a
+ * property the catalogue can be trusted on: `opencode-go` lists zero-cost
+ * models too, but through the Go subscription endpoint.
+ */
+export const FREE_PROVIDER_ID = 'opencode';
 
 /** The user's own TypeSafe key: their quota, their account, the `jev-latest` alias. */
 export const JEV_API_URL = 'https://api.typesafe.ai/v1/systemone';

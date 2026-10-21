@@ -68,6 +68,9 @@ const classifierSchema = z.object({
 export const routingStateSchema = z.object({
   available: z.boolean(),
   autoReady: z.boolean(),
+  // Auto-free needs no classifier, fallback or categories: it is ready exactly
+  // when the free tier has a usable model. Servers before it never sent this.
+  freeAutoReady: z.boolean().default(false),
   jevAvailable: z.boolean().default(true),
   tokenPresent: z.boolean(),
   // Servers before the custom source never send it.
@@ -102,6 +105,7 @@ export interface CustomEndpointInput {
 export const ROUTING_UNAVAILABLE: RoutingState = {
   available: false,
   autoReady: false,
+  freeAutoReady: false,
   jevAvailable: false,
   tokenPresent: false,
   customEndpoint: null,

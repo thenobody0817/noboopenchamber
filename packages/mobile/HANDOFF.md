@@ -88,6 +88,12 @@ iOS Simulator helpers: `mobile:sim:{boot,install,launch,run,serve,list,kill}` (s
 - **Secure storage** — `@aparajita/capacitor-secure-storage` for connection tokens.
 - **Deep links** — `openchamber://` URL scheme; a reusable intent vocabulary (`apps/deepLinks.ts`)
   used by notification taps, widgets, and Control Center. Cold-launch intents are stashed.
+- **Inbound Android shares** — the app is a share target for text, links, images and files
+  (`ACTION_SEND` / `ACTION_SEND_MULTIPLE` on `MainActivity`). `ShareTargetPlugin` copies each
+  shared stream into the cache at intent time and announces a fixed-shape payload; the renderer
+  applies it to the composer via `lib/nativeShareTarget.ts` + `apps/incomingShare.ts`. A share
+  fills the composer and never sends. iOS would need a share extension (a separate target), so
+  this is Android-only.
 - **Push notifications** — iOS APNs + Android FCM (see below). Presence-aware routing suppresses a
   device's push when an interactive (desktop/web) client is visible.
 - **iOS widgets + Control Center + Notification Service Extension** — WidgetKit extension

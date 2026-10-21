@@ -43,6 +43,9 @@ export type DecorateContext = {
   onToggleCodeBlockLineWrap?: () => void;
   // Renders a mermaid block source to svg/ascii using current theme colors.
   renderMermaid: (source: string) => MermaidRender;
+  // Renders a ```chart spec to svg, or null when the spec is unusable — which
+  // also covers a fence that is still streaming, so the block stays a code block.
+  renderChart?: (source: string) => string | null;
   onPreviewLoopback?: (url: string) => void;
 };
 
@@ -240,8 +243,8 @@ const decorateInlineCode = (root: HTMLElement): void => {
 const decorateCodeBlocks = (root: HTMLElement, ctx: DecorateContext): void => {
   const blocks = root.querySelectorAll<HTMLPreElement>('pre');
   for (const pre of Array.from(blocks)) {
-    // Skip mermaid placeholders (handled separately).
-    if (pre.querySelector('code.language-mermaid')) continue;
+    // Skip mermaid and chart placeholders (handled separately).
+    if (pre.querySelector('code.language-mermaid, code.language-chart')) continue;
     const parent = pre.parentElement;
     if (!parent) continue;
     // Already wrapped (idempotent across morphdom passes).
@@ -599,6 +602,58 @@ const decorateMermaid = (root: HTMLElement, ctx: DecorateContext): void => {
 };
 
 // ---------------------------------------------------------------------------
+// Chart: replace ```chart fences with rendered chart blocks
+// ---------------------------------------------------------------------------
+
+const decorateChart = (root: HTMLElement, ctx: DecorateContext): void => {
+  const render = ctx.renderChart;
+  if (!render) return;
+  const codes = root.querySelectorAll<HTMLElement>('pre > code.language-chart');
+  for (const code of Array.from(codes)) {
+    const pre = code.parentElement as HTMLPreElement | null;
+    if (!pre) continue;
+    const source = (code.textContent ?? '').replace(/\s+$/, '');
+    const svg = render(source);
+    // No spec yet (mid-stream) or no usable spec: the fence stays a code block.
+    if (!svg) continue;
+
+    const block = document.createElement('div');
+    block.setAttribute('data-markdown', 'chart-block');
+    block.setAttribute('data-md-source', source);
+    block.className = 'group relative';
+
+    const figure = document.createElement('div');
+    figure.setAttribute('data-markdown', 'chart-figure');
+    const svgHost = document.createElement('div');
+    svgHost.setAttribute('data-markdown', 'chart-svg');
+    svgHost.setAttribute('data-md-original-svg', svg);
+    svgHost.innerHTML = svg;
+    figure.appendChild(svgHost);
+
+    const toolbar = document.createElement('div');
+    toolbar.setAttribute('data-markdown', 'chart-toolbar');
+    toolbar.className = 'absolute top-1 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity';
+    if (ctx.mermaidControls.copy) {
+      const copy = makeIconButton('copy', ctx.labels.copyDiagram, 'chart-copy');
+      copy.setAttribute('data-md-source', source);
+      toolbar.appendChild(copy);
+    }
+    if (ctx.mermaidControls.download) {
+      const download = makeIconButton('download', ctx.labels.downloadDiagram, 'chart-download');
+      download.setAttribute('data-md-svg', '1');
+      toolbar.appendChild(download);
+    }
+
+    block.appendChild(figure);
+    block.appendChild(toolbar);
+
+    const host = pre.parentElement;
+    if (!host) continue;
+    host.replaceChild(block, pre);
+  }
+};
+
+// ---------------------------------------------------------------------------
 // External links: favicon + loopback preview button
 // ---------------------------------------------------------------------------
 
@@ -657,6 +712,7 @@ export const decorateMarkdown = (root: HTMLElement, ctx: DecorateContext): void 
   decorateImageLabels(root);
   decorateInlineCode(root);
   decorateMermaid(root, ctx);
+  decorateChart(root, ctx);
   decorateCodeBlocks(root, ctx);
   decorateTables(root, ctx.labels);
   decorateLinks(root, ctx);
@@ -859,6 +915,20 @@ export const attachMarkdownInteractions = (
       const svgHost = actionEl.closest('[data-markdown="mermaid-block"]')?.querySelector('[data-markdown="mermaid"]');
       const svg = svgHost?.getAttribute('data-md-original-svg') ?? svgHost?.innerHTML ?? '';
       if (svg) downloadBlob('diagram.svg', svg, 'image/svg+xml;charset=utf-8');
+      return;
+    }
+
+    // Chart copy spec / download svg
+    if (action === 'chart-copy') {
+      const source = actionEl.getAttribute('data-md-source') ?? '';
+      if (source) void copyTextToClipboard(source).then(() => flashCopied(actionEl as HTMLButtonElement, ctx.labels.copied, 'copy', ctx.labels.copyDiagram));
+      return;
+    }
+
+    if (action === 'chart-download') {
+      const svgHost = actionEl.closest('[data-markdown="chart-block"]')?.querySelector('[data-markdown="chart-svg"]');
+      const svg = svgHost?.getAttribute('data-md-original-svg') ?? svgHost?.innerHTML ?? '';
+      if (svg) downloadBlob('chart.svg', svg, 'image/svg+xml;charset=utf-8');
       return;
     }
 

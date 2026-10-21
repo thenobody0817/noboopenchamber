@@ -454,11 +454,12 @@ interface ModelPickerListProps {
   };
   selectedModel?: { providerID: string; modelID: string } | null;
   /**
-   * A row pinned above favorites and providers: the Auto routing entry. It is
-   * not one of `providers`, takes part in keyboard navigation like any row,
-   * and is filtered by the search query on its display name.
+   * Rows pinned above favorites and providers: the routing sentinels (Auto and
+   * Auto-free). They are not part of `providers`, take part in keyboard
+   * navigation like any row, and are filtered by the search query on their
+   * display name. Order is the order given.
    */
-  leadingEntry?: ModelPickerEntry | null;
+  leadingEntries?: ModelPickerEntry[] | null;
   /**
    * An action pinned right after the leading entry (the composer's "Run on
    * several models"). It is not a model, but it looks and navigates like a
@@ -510,7 +511,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
   onSelect,
   labels,
   selectedModel,
-  leadingEntry = null,
+  leadingEntries = null,
   leadingAction = null,
   hiddenModels = [],
   allowedProviderIds,
@@ -704,16 +705,15 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
     if (stickyHeaders && scrollRef.current) syncStickyFade(scrollRef.current);
   }, [stickyHeaders, syncStickyFade, visibleSectionKeys]);
 
-  const visibleLeadingEntry = React.useMemo(() => {
-    if (!leadingEntry) return null;
-    return matchesQuery(getModelDisplayName(leadingEntry.model), leadingEntry.providerID, leadingEntry.modelID) ? leadingEntry : null;
-  }, [leadingEntry, matchesQuery]);
+  const visibleLeadingEntries = React.useMemo(() => (leadingEntries ?? []).filter((entry) =>
+    matchesQuery(getModelDisplayName(entry.model), entry.providerID, entry.modelID),
+  ), [leadingEntries, matchesQuery]);
 
   const showLeadingAction = Boolean(leadingAction) && !searchQuery.trim();
 
   const flatModelList = React.useMemo(() => {
     const items: NavigationItem[] = [];
-    if (visibleLeadingEntry) items.push(visibleLeadingEntry);
+    items.push(...visibleLeadingEntries);
     if (showLeadingAction) items.push(LEADING_ACTION_SLOT);
     if (!collapsedSections.has('favorites')) filteredFavorites.forEach((entry) => items.push(entry));
     if (!collapsedSections.has('recent')) filteredRecents.forEach((entry) => items.push(entry));
@@ -723,7 +723,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
       provider.models.forEach((model) => items.push({ model, providerID: provider.id, modelID: model.id as string }));
     });
     return items;
-  }, [collapsedSections, filteredFavorites, filteredProviders, filteredRecents, showLeadingAction, visibleLeadingEntry]);
+  }, [collapsedSections, filteredFavorites, filteredProviders, filteredRecents, showLeadingAction, visibleLeadingEntries]);
 
   const hasResults = flatModelList.some((item) => item !== LEADING_ACTION_SLOT);
   const favoriteSortingEnabled = Boolean(onReorderFavorite) && searchQuery.trim().length === 0 && filteredFavorites.length > 1;
@@ -1154,10 +1154,15 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
             <div className="px-2 py-4 text-center typography-meta text-muted-foreground">{labels.noResults}</div>
           ) : null}
 
-          {visibleLeadingEntry ? (
+          {visibleLeadingEntries.length > 0 ? (
             <>
-              {renderRow(visibleLeadingEntry, 'leading', false, currentFlatIndex++)}
-              {!showLeadingAction && (filteredFavorites.length > 0 || filteredRecents.length > 0 || filteredProviders.length > 0) ? <div className="h-px bg-border/40 my-1" /> : null}
+              {visibleLeadingEntries.map((entry, index) => (
+                <React.Fragment key={`leading:${entry.providerID}/${entry.modelID}`}>
+                  {renderRow(entry, 'leading', false, currentFlatIndex++)}
+                  {/* The separator belongs after the last sentinel, not after each. */}
+                  {index === visibleLeadingEntries.length - 1 && !showLeadingAction && (filteredFavorites.length > 0 || filteredRecents.length > 0 || filteredProviders.length > 0) ? <div className="h-px bg-border/40 my-1" /> : null}
+                </React.Fragment>
+              ))}
             </>
           ) : null}
 

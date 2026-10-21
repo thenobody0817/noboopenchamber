@@ -6,6 +6,7 @@ import { createJevClient, decidePermission, decideRouting } from './jev.js';
 import { classifierEndpoint, normalizeCustomEndpointUrl, resolveClassifier } from './classifier.js';
 
 const AUTO = { providerID: 'openchamber', id: 'auto' };
+const AUTO_FREE = { providerID: 'openchamber', id: 'auto-free' };
 const FALLBACK = { model: { providerID: 'anthropic', modelID: 'claude-sonnet-5' }, variant: 'medium' };
 
 const readyConfig = () => {
@@ -19,7 +20,7 @@ const readyConfig = () => {
   return config;
 };
 
-const makeRuntime = ({ config = readyConfig(), token = 'key', classifierSource = null, customEndpoint = null, providerKeys = {}, zenPromotionActive = true, enterprise = false, pinned = null, catalog = [], answers, askError } = {}) => {
+const makeRuntime = ({ config = readyConfig(), token = 'key', classifierSource = null, customEndpoint = null, providerKeys = {}, zenPromotionActive = true, enterprise = false, pinned = null, catalog = [], answers, askError, hiddenModels = [], random = Math.random } = {}) => {
   const events = [];
   const store = {
     readConfig: vi.fn(async () => config),
@@ -49,9 +50,27 @@ const makeRuntime = ({ config = readyConfig(), token = 'key', classifierSource =
       if (catalog instanceof Error) throw catalog;
       return catalog;
     },
+    readHiddenModels: () => new Set(hiddenModels),
+    random,
   });
   return { runtime, store, jev, events };
 };
+
+/** A catalogue entry as OpenCode serves it: cost tiers, capabilities, status. */
+const catalogModel = (providerID, modelID, { cost = [{ input: 0, output: 0 }], tools = true, status = 'active', enabled = true, variants = [] } = {}) =>
+  ({ providerID, modelID, capabilities: { tools }, cost, status, enabled, variants });
+
+/** The free tier this install actually has, in miniature. */
+const FREE_CATALOG = [
+  catalogModel('opencode', 'cat-jam-free'),
+  catalogModel('opencode', 'step-5-preview-free'),
+  catalogModel('opencode-go', 'cat-jam-free'),
+  catalogModel('opencode', 'lyria-free', { tools: false }),
+  catalogModel('opencode', 'paid-preview', { cost: [{ input: 0, output: 0 }, { input: 1, output: 2 }] }),
+  catalogModel('opencode', 'unpriced', { cost: [] }),
+  catalogModel('opencode', 'retired-free', { status: 'deprecated' }),
+  catalogModel('opencode', 'disabled-free', { enabled: false }),
+];
 
 describe('requestTextOf', () => {
   it('reads the prompt text a v2 send carries', () => {
@@ -170,6 +189,131 @@ describe('resolveAutoSelection', () => {
 
     const unreachable = makeRuntime({ catalog: new Error('OpenCode down'), answers: { category: { choice: 'trivial', confidence: 0.99 } } });
     expect((await unreachable.runtime.resolveAutoSelection(send())).model.variant).toBe('medium');
+  });
+});
+
+describe('resolveFreeSelection', () => {
+  const send = (extra = {}) => ({ sessionId: 's1', model: AUTO_FREE, requestText: 'anything', ...extra });
+
+  it('leaves a real model and the Auto sentinel untouched', async () => {
+    const { runtime, jev } = makeRuntime({ catalog: FREE_CATALOG, answers: {} });
+    expect(await runtime.resolveFreeSelection(send({ model: { providerID: 'anthropic', id: 'claude-opus-5' } }))).toBeNull();
+    expect(await runtime.resolveFreeSelection(send({ model: AUTO }))).toBeNull();
+    expect(jev.ask).not.toHaveBeenCalled();
+  });
+
+  it('picks a free model without asking Jev or reading history', async () => {
+    const { runtime, jev, events } = makeRuntime({ catalog: FREE_CATALOG, answers: {} });
+    const resolved = await runtime.resolveFreeSelection(send({ agent: 'build' }));
+    expect(['cat-jam-free', 'step-5-preview-free']).toContain(resolved.model.id);
+    expect(resolved.model.providerID).toBe('opencode');
+    expect(resolved.agent).toBe('build');
+    expect(resolved.decision).toMatchObject({ reason: 'free-pick', category: null, variant: null, agent: null });
+    expect(events.at(-1)).toMatchObject({ type: 'openchamber:routing.decision', properties: { reason: 'free-pick' } });
+    expect(jev.ask).not.toHaveBeenCalled();
+  });
+
+  it('keeps one model for the whole session, however many turns pass', async () => {
+    const { runtime } = makeRuntime({ catalog: FREE_CATALOG, answers: {}, random: () => 0 });
+    runtime.noteModelSelection('s1', AUTO_FREE);
+    const first = await runtime.resolveFreeSelection(send());
+    const second = await runtime.resolveFreeSelection(send());
+    const third = await runtime.resolveFreeSelection(send());
+    expect(first.model).toEqual(second.model);
+    expect(second.model).toEqual(third.model);
+  });
+
+  it('honours the random draw and keeps the pin across marks on one session', async () => {
+    const { runtime } = makeRuntime({ catalog: FREE_CATALOG, answers: {}, random: () => 0.99 });
+    runtime.noteModelSelection('s1', AUTO_FREE);
+    expect((await runtime.resolveFreeSelection(send())).model.id).toBe('step-5-preview-free');
+    // The pin is what persists; the mark alone does not re-roll.
+    expect((await runtime.resolveFreeSelection(send())).model.id).toBe('step-5-preview-free');
+    expect(runtime.isAutoSession('s1')).toBe(true);
+  });
+
+  it('moves the session when the pinned model leaves the free tier', async () => {
+    const models = [catalogModel('opencode', 'cat-jam-free'), catalogModel('opencode', 'step-5-preview-free')];
+    let current = models;
+    const runtime = createRoutingRuntime({
+      dataDir: '/unused',
+      buildOpenCodeUrl: () => 'http://127.0.0.1:1/',
+      getOpenCodeAuthHeaders: () => ({}),
+      store: { readConfig: async () => readyConfig() },
+      jev: { ask: async () => ({ answers: {}, ms: 1 }) },
+      listCatalogModels: async () => current,
+      readHiddenModels: () => new Set(),
+      random: () => 0,
+    });
+    runtime.noteModelSelection('s1', AUTO_FREE);
+    expect((await runtime.resolveFreeSelection(send())).model.id).toBe('cat-jam-free');
+    // OpenCode retires the pinned model mid-thread.
+    current = [catalogModel('opencode', 'step-5-preview-free')];
+    expect((await runtime.resolveFreeSelection(send())).model.id).toBe('step-5-preview-free');
+  });
+
+  it('refuses when no free model resolves, rather than falling back to a paid one', async () => {
+    const { runtime } = makeRuntime({ catalog: [], answers: {} });
+    await expect(runtime.resolveFreeSelection(send())).rejects.toMatchObject({ status: 400 });
+    const paidOnly = makeRuntime({ catalog: [catalogModel('opencode', 'paid', { cost: [{ input: 1, output: 2 }] })], answers: {} });
+    await expect(paidOnly.runtime.resolveFreeSelection(send())).rejects.toThrow(/no free model/i);
+  });
+});
+
+describe('the free filter', () => {
+  /** The model a free pick would land on, or null when nothing qualifies. */
+const freeIds = async (catalog, options = {}) => {
+    const { runtime } = makeRuntime({ catalog, ...options });
+    await runtime.describe();
+    return runtime.resolveSelection({ sessionId: 's1', directory: null, model: AUTO_FREE })
+      .then((resolved) => resolved?.model.id ?? null, () => null);
+  };
+
+  it('keeps only zero-cost models that are active, offered and can call tools', async () => {
+    const survivors = new Set();
+    for (const random of [0, 0.34, 0.67, 0.99]) {
+      const { runtime } = makeRuntime({ catalog: FREE_CATALOG, random: () => random });
+      const resolved = await runtime.resolveFreeSelection({ sessionId: `s-${random}`, model: AUTO_FREE });
+      survivors.add(resolved.model.id);
+    }
+    // Everything else in FREE_CATALOG is excluded by one filter line each.
+    expect([...survivors].sort()).toEqual(['cat-jam-free', 'step-5-preview-free']);
+  });
+
+  it('excludes a model hidden from the picker', async () => {
+    const { runtime } = makeRuntime({ catalog: FREE_CATALOG, hiddenModels: ['opencode/cat-jam-free'], random: () => 0.99 });
+    const resolved = await runtime.resolveFreeSelection({ sessionId: 's1', model: AUTO_FREE });
+    expect(resolved.model.id).toBe('step-5-preview-free');
+  });
+
+  it('treats an unknown cost as not free, and keeps the last entry of a doubled model', async () => {
+    expect(await freeIds([catalogModel('opencode', 'unpriced', { cost: [] })])).toBeNull();
+    // cat-jam-free is listed under two providers; the public one wins, so both
+    // entries do not make it twice as likely.
+    const { runtime } = makeRuntime({
+      catalog: [catalogModel('opencode-go', 'cat-jam-free'), catalogModel('opencode', 'cat-jam-free')],
+      random: () => 0,
+    });
+    const resolved = await runtime.resolveFreeSelection({ sessionId: 's1', model: AUTO_FREE });
+    expect(resolved.model).toEqual({ providerID: 'opencode', id: 'cat-jam-free' });
+  });
+
+  it('reports Auto-free ready without a classifier, a fallback or categories', async () => {
+    const config = resolveEffectiveConfig(null);
+    config.enabled = false;
+    config.fallback = null;
+    const { runtime } = makeRuntime({ config, token: null, catalog: FREE_CATALOG, answers: {} });
+    const state = await runtime.describe();
+    expect(state.freeAutoReady).toBe(true);
+    expect(state.autoReady).toBe(false);
+    expect(state.jevAvailable).toBe(false);
+  });
+
+  it('reports Auto-free unavailable with no free model, and when the catalog cannot be read', async () => {
+    const empty = makeRuntime({ catalog: [] });
+    expect((await empty.runtime.describe()).freeAutoReady).toBe(false);
+    const broken = makeRuntime({ catalog: new Error('OpenCode down') });
+    expect((await broken.runtime.describe()).freeAutoReady).toBe(false);
   });
 });
 

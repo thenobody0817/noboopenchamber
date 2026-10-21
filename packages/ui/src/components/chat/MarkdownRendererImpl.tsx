@@ -30,6 +30,8 @@ import {
   type MarkdownRawHtmlMode,
 } from './markdown/markdownCore';
 import { ensureMarkdownShikiTheme } from './markdown/markdownTheme';
+import { parseChartSpec } from './markdown/chartSpec';
+import { renderChartSvg, type ChartColors } from './markdown/chartSvg';
 import { getMarkdownSyntaxVars } from './markdown/markdownSyntaxVars';
 import {
   attachMarkdownInteractions,
@@ -725,6 +727,10 @@ const useMermaidInlineInteractions = ({
 // so a stable diagram is laid out once and served from cache thereafter.
 const MERMAID_RENDER_CACHE = new Map<string, MermaidRender>();
 const MERMAID_RENDER_CACHE_MAX = 100;
+// Charts render far cheaper than mermaid, but a streamed reply re-decorates on
+// every step, so the same memoization applies with the spec as the key.
+const CHART_RENDER_CACHE = new Map<string, string | null>();
+const CHART_RENDER_CACHE_MAX = 100;
 const MARKDOWN_DECORATION_ID_ATTR = 'data-md-decoration-id';
 
 // True when the container already holds exactly these settled blocks with the
@@ -796,6 +802,24 @@ const cachedMermaidRender = (key: string, compute: () => MermaidRender): Mermaid
   return value;
 };
 
+const cachedChartRender = (key: string, compute: () => string | null): string | null => {
+  // A null (unusable spec) is cached too: it is the streaming state, and
+  // re-parsing the same partial JSON on every step is the expensive part.
+  if (CHART_RENDER_CACHE.has(key)) {
+    const existing = CHART_RENDER_CACHE.get(key) ?? null;
+    CHART_RENDER_CACHE.delete(key);
+    CHART_RENDER_CACHE.set(key, existing);
+    return existing;
+  }
+  const value = compute();
+  CHART_RENDER_CACHE.set(key, value);
+  if (CHART_RENDER_CACHE.size > CHART_RENDER_CACHE_MAX) {
+    const oldest = CHART_RENDER_CACHE.keys().next().value;
+    if (oldest) CHART_RENDER_CACHE.delete(oldest);
+  }
+  return value;
+};
+
 const mermaidColorsFromTheme = (theme: Theme) => ({
   bg: theme.colors.surface.elevated,
   fg: theme.colors.surface.foreground,
@@ -806,6 +830,16 @@ const mermaidColorsFromTheme = (theme: Theme) => ({
   border: theme.colors.interactive.border,
   transparent: true,
   font: 'system-ui, sans-serif',
+});
+
+const chartColorsFromTheme = (theme: Theme): ChartColors => ({
+  fg: theme.colors.surface.foreground,
+  muted: theme.colors.surface.mutedForeground,
+  line: theme.colors.interactive.border,
+  accent: theme.colors.primary.base,
+  surface: theme.colors.surface.muted,
+  positive: theme.colors.status.success,
+  negative: theme.colors.status.error,
 });
 
 const useDecorateContext = (
@@ -850,7 +884,13 @@ const useDecorateContext = (
           return {};
         }
       });
-    return { labels, mermaidControls, codeBlockLineWrap, deferCodeLineNumberSync, onToggleCodeBlockLineWrap: toggleCodeBlockLineWrap, renderMermaid, onPreviewLoopback };
+    const chartColors = chartColorsFromTheme(currentTheme);
+    const renderChart = (source: string): string | null =>
+      cachedChartRender(`${themeId}:${source}`, () => {
+        const spec = parseChartSpec(source);
+        return spec ? renderChartSvg(spec, chartColors) : null;
+      });
+    return { labels, mermaidControls, codeBlockLineWrap, deferCodeLineNumberSync, onToggleCodeBlockLineWrap: toggleCodeBlockLineWrap, renderMermaid, renderChart, onPreviewLoopback };
   }, [currentTheme, labels, mermaidControls, codeBlockLineWrap, deferCodeLineNumberSync, toggleCodeBlockLineWrap, onPreviewLoopback]);
 };
 

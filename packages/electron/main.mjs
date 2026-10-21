@@ -10,7 +10,25 @@ import path from 'node:path';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import updaterPkg from 'electron-updater';
+/** Auto-updater is only meaningful in a packaged build. Dev runs with a
+ *  placeholder version ("0.0") that electron-updater rejects as invalid semver. */
+const isDev = process.env.OPENCHAMBER_ELECTRON_DEV === '1' || !app.isPackaged;
+const updaterPkg = isDev
+  ? { autoUpdater: {
+      autoDownload: false,
+      autoInstallOnAppQuit: false,
+      allowPrerelease: false,
+      fullChangelog: true,
+      disableWebInstaller: false,
+      logger: null,
+      setFeedURL: () => {},
+      on: () => {},
+      off: () => {},
+      quitAndInstall: () => {},
+      downloadUpdate: () => Promise.resolve(),
+      channel: '',
+    } }
+  : (await import('electron-updater'));
 import { ElectronSshManager } from './ssh-manager.mjs';
 import { replaceFileWithRetry } from './windows-file-replace.mjs';
 import { createTrayController } from './tray.mjs';
@@ -30,7 +48,6 @@ import {
   getWindowIconPath,
   installPackagedUiRequestHandler,
   installStartupMarkSink,
-  isDev,
   isMacMenuBarEnabled,
   macosMajorVersion,
   readLoginItemSettings,
@@ -219,7 +236,7 @@ const INSTALLED_APPS_CACHE_FILE = 'discovered-apps.json';
 const INSTALLED_APPS_CACHE_VERSION = 2;
 const LINUX_DESKTOP_ENTRIES_CACHE_TTL_MS = 30_000;
 const OPENCODE_SHUTDOWN_GRACE_MS = 100;
-const { autoUpdater } = updaterPkg;
+const autoUpdater = updaterPkg.autoUpdater;
 
 const state = {
   serverHandle: null,

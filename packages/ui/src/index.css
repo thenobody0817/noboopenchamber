@@ -96,6 +96,7 @@ button,
   [data-component="markdown-code"],
   [data-markdown="table-wrapper"],
   [data-markdown="mermaid-block"],
+  [data-markdown="chart-block"],
   .katex,
   [data-openchamber-file-link="true"],
   [data-openchamber-agent-mention="true"],
@@ -1704,6 +1705,27 @@ html:not(.dark) .chat-scroll {
   max-width: none !important;
   display: block;
   background: var(--surface-elevated);
+}
+
+/* Chart block: a card that holds the figure and its hover toolbar. */
+[data-markdown="chart-block"] {
+  position: relative;
+  margin: 1rem 0;
+  border-radius: 0.75rem;
+  border: 1px solid var(--interactive-border);
+  background: var(--surface-elevated);
+  padding: 0.75rem 0.875rem;
+}
+
+[data-markdown="chart-block"] [data-markdown="chart-figure"] {
+  min-width: 0;
+}
+
+[data-markdown="chart-block"] [data-markdown="chart-svg"] svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
 }
 
 /* Fullscreen Mermaid popup: scale diagrams to fill available viewport panel area. */

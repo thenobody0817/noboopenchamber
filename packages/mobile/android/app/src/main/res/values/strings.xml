@@ -4,4 +4,13 @@
     <string name="title_activity_main">OpenChamber</string>
     <string name="package_name">com.openchamber.app</string>
     <string name="custom_url_scheme">com.openchamber.app</string>
+    <!-- Camera snapshots. The web layer owns every other label, so these cover
+         only the native viewfinder's own controls. -->
+    <string name="camera_cancel">Cancel</string>
+    <string name="camera_snap">Snap</string>
+    <string name="camera_done">Done</string>
+    <string name="camera_unavailable">No camera available</string>
+    <string name="camera_bind_failed">Could not open the camera</string>
+    <string name="camera_capture_failed">Could not take that photo</string>
+    <string name="camera_permission_denied">OpenChamber needs camera access to take photos</string>
 </resources>

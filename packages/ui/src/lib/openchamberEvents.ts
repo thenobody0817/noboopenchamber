@@ -96,7 +96,9 @@ const routingDecisionSchema = z.object({
   at: z.number(),
   category: z.string().nullable(),
   confidence: z.number(),
-  reason: z.enum(['routed', 'low-confidence', 'unknown-category', 'error', 'not-ready']),
+  // `free-pick` is Auto-free: a model rolled from the free tier, with no
+  // classification behind it.
+  reason: z.enum(['routed', 'low-confidence', 'unknown-category', 'error', 'not-ready', 'free-pick']),
   providerID: z.string().optional(),
   modelID: z.string().optional(),
   variant: z.string().nullable().optional(),

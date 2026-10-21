@@ -1053,7 +1053,9 @@ const messageQueueRuntime = createMessageQueueRuntime({
   // OpenCode's event SSE proxy cannot carry OpenChamber-owned events. Use the
   // shared control stream for SSE clients and the existing WS fan-out.
   broadcastGlobalUiEvent: broadcastOpenChamberUiEvent,
-  resolveAutoSelection: (send) => routingRuntime.resolveAutoSelection(send),
+  // Resolves either sentinel: `auto` through Jev, `auto-free` through the free
+  // roll. Callers that only hold a model ref use this one.
+  resolveAutoSelection: (send) => routingRuntime.resolveSelection(send),
   onPromptSent: (sessionId) => sessionRuntime.markUserMessageSent(sessionId),
   dataDir: OPENCHAMBER_DATA_DIR,
 });
@@ -1572,7 +1574,7 @@ const openChamberSessionService = createOpenChamberSessionService({
   sessionMetadataStore,
   persistSessionMetadata: persistSessionMetadataPatch,
   broadcastGlobalUiEvent: broadcastOpenChamberUiEvent,
-  resolveAutoSelection: (input) => routingRuntime.resolveAutoSelection(input),
+  resolveAutoSelection: (input) => routingRuntime.resolveSelection(input),
 });
 // Browser actions are published to whichever OpenChamber clients are connected;
 // the one owning the browser panel answers. `emitRequest` returns the number of

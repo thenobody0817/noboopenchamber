@@ -560,6 +560,67 @@ re-resolved by text and context whenever the marked message re-renders or
 remounts. Offsets only break ties. Quotes sent before anchors existed are
 found only when their text appears once in the message.
 
+## Camera snapshots
+
+Android only. The composer offers a `Camera` row in the mobile attachment sheet
+whenever `isCameraCaptureAvailable()` reports hardware; the row's visibility is
+gated on hardware presence, never on permission, so an unprompted install still
+offers the feature and the viewfinder asks when it is first opened.
+
+A session is a round trip between two runtimes. React opens a native CameraX
+viewfinder (`CameraCapturePlugin`, a real native surface added above the WebView,
+so nothing here makes the web layer transparent), the user snaps and ends the
+session from the viewfinder's own controls, and React then walks the photos one at
+a time collecting a note before finally attaching them. `useCameraSnapshots` owns
+that sequence so the composer itself only supplies `insertText`.
+
+The viewfinder owns its own lifetime. Done, Cancel and hardware back all end it
+natively and report the outcome through `cameraSessionEnded`, so the hook never
+closes a session the user is still in. That also sets the two rules worth keeping:
+the hook must not close the viewfinder, and its session-ended listener must not
+re-subscribe on every render or it will miss events mid-session — the collected
+photos live in a ref for exactly that reason.
+
+`MobileCameraSession` renders the comment step in its own portal and registers
+with `registerBackLayer`, so hardware back closes the session rather than the chat
+behind it. `CameraSnapshotNoteInput` drives `useDictation` directly rather than
+`ComposerDictation`, because that overlay is `absolute inset-0` and would cover
+the whole session; the audio path and STT server are shared, so this adds no
+second capture route.
+
+Photos are provisional state in the hook, not composer attachments: any can still
+be discarded or re-noted before the session ends. Four consequences worth keeping:
+
+- The event's count is the native session's **running total**, not the count just
+  taken, because the native session keeps every photo until cleared. A second
+  snap round reads from the number already collected, so earlier photos are not
+  fetched twice.
+- Photos are attached one at a time. Each attachment becomes a base64 data URL
+  inside the composer's store, so a parallel batch would hold several megabytes
+  at once.
+- Photos go through the composer's own `attachFilesWithCitation`, so they are
+  cited as `[filename]` and obey the same draft-switch guard as a pasted image.
+  That helper returns the names it *actually* attached, and the notes are keyed to
+  those — a deduplicated attachment reports nothing rather than a filename the
+  model will never see.
+- Captures are capped at 1600px wide natively, matching `MAX_OUTPUT_WIDTH` in
+  `lib/browser/annotationScreenshot.ts`.
+
+Unmounting mid-session releases every preview's object URL and clears the native
+cache, so a session switch cannot strand them.
+
+The device sleeps after about 30 seconds, which is shorter than a session of
+framing a shot. Both halves hold the screen awake: the viewfinder sets
+`keepScreenOn` on its own overlay, and the comment step takes a Screen Wake Lock
+(`requestScreenAwake`) released whenever the step closes. The overlay carries the
+flag rather than a window flag so detaching it releases the hold with no
+bookkeeping; the web lock re-takes itself on `visibilitychange`, because the
+system drops it whenever the page is hidden.
+
+Notes are inserted as `filename: note` lines through the composer's own
+`insertTextAtSelection`, so they land at the caret like any other attachment
+citation.
+
 ## Mobile comment mode
 
 On mobile, "Comment" on a text selection does not open a floating input. The

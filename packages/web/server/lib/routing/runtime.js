@@ -11,10 +11,26 @@
  * per-session state here: the sentinel arrives on `POST /session/:id/model`
  * and is swallowed, and every prompt in that session is routed until a real
  * model is selected.
+ *
+ * There are two sentinels on that provider. `auto` asks Jev which category a
+ * prompt belongs to; `auto-free` skips Jev entirely and runs on a model picked
+ * at random from the free tier, once per session.
  */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { OpenCode } from '@opencode/client';
 import { z } from 'zod';
-import { AUTO_MODEL_REF, BUILTIN_CATEGORIES, ZEN_JEV_PROMOTION_ACTIVE, isAutoModel } from './defaults.js';
+import {
+  AUTO_FREE_MODEL_REF,
+  AUTO_MODEL_REF,
+  BUILTIN_CATEGORIES,
+  FREE_PROVIDER_ID,
+  ZEN_JEV_PROMOTION_ACTIVE,
+  sentinelModeOf,
+} from './defaults.js';
+import { readMergedSettingsSync } from '../opencode/settings-files.js';
 import { createRoutingStore, parseEffectiveConfig } from './store.js';
 import { buildPermissionRequest, buildRoutingRequest, createJevClient, decidePermission, decideRouting } from './jev.js';
 import {
@@ -32,6 +48,32 @@ import { ENTERPRISE_MODE_ERROR, isEnterpriseMode } from '../enterprise-mode.js';
 const HISTORY_TIMEOUT_MS = 2500;
 /** A held permission is remembered so reconnect reconciliation does not re-ask Jev. */
 const PERMISSION_DECISION_TTL_MS = 15 * 60 * 1000;
+
+const OPENCHAMBER_SETTINGS_FILE = path.join(
+  process.env.OPENCHAMBER_DATA_DIR
+    ? path.resolve(process.env.OPENCHAMBER_DATA_DIR)
+    : path.join(os.homedir(), '.config', 'openchamber'),
+  'settings.json',
+);
+
+/**
+ * The models the user hid from the picker, as `provider/model` strings.
+ *
+ * Auto-free picks from the same catalogue the picker shows, so it has to honour
+ * the same exclusions: a "free" choice that keeps handing back a model the user
+ * deliberately hid is worse than not offering the feature. Read synchronously
+ * because it sits on the send path, the way `session-goal` reads its toggles.
+ */
+// The merged document is untyped JSON, so the model refs are parsed here rather
+// than narrowed by inspection at each use.
+const hiddenModelRefSchema = z.object({ providerID: z.string().min(1), modelID: z.string().min(1) });
+
+const hiddenModelRefs = (fsImpl = fs, pathImpl = path, settingsFilePath = OPENCHAMBER_SETTINGS_FILE) => {
+  const settings = readMergedSettingsSync({ fs: fsImpl, path: pathImpl, settingsFilePath });
+  const hidden = z.array(hiddenModelRefSchema).safeParse(settings.hiddenModels);
+  if (!hidden.success) return new Set();
+  return new Set(hidden.data.map((entry) => `${entry.providerID}/${entry.modelID}`));
+};
 
 const errorMessage = (error) => (error instanceof Error ? error.message : String(error));
 
@@ -56,11 +98,16 @@ export const requestTextOf = (body) => {
 const agentBodySchema = z.object({ agent: z.string().trim().min(1) });
 
 // v2 serves one flat model catalogue; a model's thinking levels are `{ id }[]`.
+// The free filter also needs what a model costs and whether it is offered, so
+// those travel here too.
 const catalogResponseSchema = z.object({
   data: z.array(z.object({
     providerID: z.string(),
     modelID: z.string(),
-    variants: z.array(z.object({ id: z.string() })).default([]),
+    capabilities: z.object({ tools: z.boolean().optional() }).optional(),
+    cost: z.array(z.object({ input: z.number(), output: z.number() })).default([]),
+    status: z.string().optional(),
+    enabled: z.boolean().optional(),
   })),
 });
 
@@ -122,11 +169,14 @@ export function createRoutingRuntime({
   enterpriseMode = isEnterpriseMode,
   readPinnedEndpoint = readPinnedCustomEndpoint,
   listCatalogModels = null,
+  readHiddenModels = hiddenModelRefs,
+  random = Math.random,
   now = Date.now,
 }) {
   const permissionDecisions = new Map();
-  // Sessions the user put on Auto. The sentinel never reaches OpenCode, so
-  // nothing upstream remembers the choice for us.
+  // Sessions the user put on a sentinel, with which one (`mode`) and, for a
+  // free session, the model it was rolled onto. The sentinel never reaches
+  // OpenCode, so nothing upstream remembers the choice for us.
   // TODO(v2): this is process memory. A server restart drops the mark and the
   // session silently runs on whatever model it was last switched to while the
   // composer still shows Auto. Either persist it next to `routing.json` or have
@@ -179,6 +229,19 @@ export function createRoutingRuntime({
     const [config, access] = await Promise.all([store.readConfig(), resolveAccess()]);
     const jevAvailable = access.endpoint !== null;
     const autoReady = jevAvailable && config.enabled && Boolean(config.fallback) && enabledCategories(config).length >= 2;
+    // Auto-free needs none of that: no classifier, no fallback, no categories.
+    // It is ready exactly when the free tier has at least one usable model.
+    //
+    // Read without a `directory` on purpose: this endpoint takes none, and a
+    // boolean is all it carries. The catalogue is location-scoped, so the pick
+    // made at send time is scoped while this readiness flag is not — a location
+    // whose catalogue differs can disagree, and the send is what decides.
+    let freeAutoReady = false;
+    try {
+      freeAutoReady = (await freeModels()).length > 0;
+    } catch (error) {
+      console.warn('[routing] model catalog unavailable, Auto-free is not offered:', errorMessage(error));
+    }
     // Built-in text travels with the config so "Reset" in Settings restores the shipped wording.
     // `available` stays in the payload for the client: a runtime without an
     // OpenChamber server (VS Code) answers 404 and reads it as false.
@@ -188,6 +251,7 @@ export function createRoutingRuntime({
     return {
       available: true,
       autoReady,
+      freeAutoReady,
       jevAvailable,
       tokenPresent: access.tokenPresent,
       customEndpoint: describeCustomEndpoint(access.customEndpoint, access.pinned),
@@ -205,6 +269,7 @@ export function createRoutingRuntime({
     broadcast('openchamber:routing.updated', {
       available: state.available,
       autoReady: state.autoReady,
+      freeAutoReady: state.freeAutoReady,
       jevAvailable: state.jevAvailable,
       tokenPresent: state.tokenPresent,
       jevSource: state.jevSource,
@@ -247,8 +312,61 @@ export function createRoutingRuntime({
     };
   };
 
+  /**
+   * The catalogue, from the caller when one was injected and from OpenCode
+   * otherwise. An injected source already yields parsed rows, so it is used
+   * as-is; the live call goes through `catalogResponseSchema`.
+   */
   const readCatalog = listCatalogModels
     ?? (async (directory) => catalogResponseSchema.parse(await openCodeClient(directory).model.list()).data);
+
+  /**
+   * The models Auto-free may pick from.
+   *
+   * "Free" is read off the catalogue rather than a hand-written list, because
+   * OpenCode rotates this tier: the free roster on this install changed between
+   * two runs of the same build. A model qualifies when every cost tier is
+   * exactly zero, it is still offered, and it can call tools. Three exclusions
+   * are deliberate rather than incidental:
+   *
+   * - a missing `cost` array is NOT free. It means the catalogue does not know
+   *   the price; a local model configured by hand looks exactly like this, and
+   *   "we cannot tell" must never resolve to "cost us nothing".
+   * - `capabilities.tools === false` keeps the image and audio models out; a
+   *   free pick that cannot call tools is useless to an agent.
+   * - a repeat `modelID` is skipped, because several free models are listed
+   *   under more than one provider and would otherwise be twice as likely.
+   *
+   * Scoped to `FREE_PROVIDER_ID`: those models authenticate with a public key
+   * and need no credential from the user. `opencode-go` also lists zero-cost
+   * models, but they are served by the Go subscription endpoint.
+   */
+  const freeModels = async (directory) => {
+    const hidden = readHiddenModels();
+    const seen = new Set();
+    const models = [];
+    for (const model of await readCatalog(directory)) {
+      if (model.providerID !== FREE_PROVIDER_ID) continue;
+      if (model.enabled === false) continue;
+      if (model.status && model.status !== 'active') continue;
+      if (model.capabilities?.tools === false) continue;
+      if (!model.cost.length) continue;
+      if (!model.cost.every((tier) => tier.input === 0 && tier.output === 0)) continue;
+      if (seen.has(model.modelID)) continue;
+      if (hidden.has(`${model.providerID}/${model.modelID}`)) continue;
+      seen.add(model.modelID);
+      models.push({ providerID: model.providerID, modelID: model.modelID });
+    }
+    return models;
+  };
+
+  /**
+   * A free model to run on. Never falls back: with no free model the caller is
+   * told the set is empty rather than sent to the configured fallback, which is
+   * usually a paid model. Quietly spending the user's money out of a picker
+   * labelled "free" is the one outcome worth refusing instead of paper over.
+   */
+  const pickFreeModel = (models) => models[Math.floor(random() * models.length)] ?? null;
 
   /**
    * Drops a variant the model does not list, so the reply runs on the model's
@@ -278,6 +396,56 @@ export function createRoutingRuntime({
   };
 
   /**
+   * Resolves one send in an Auto-free session: the model this session was rolled
+   * onto, or a fresh roll. Returns the same shape as `resolveAutoSelection`, so
+   * every caller above it is unchanged.
+   *
+   * The roll is per session, not per send. A new model each turn would mean a
+   * cold prompt cache on every message and a visibly different voice inside one
+   * transcript; pinning keeps the thread coherent while a new session still
+   * gives a new roll. It only moves when the pinned model is no longer in the
+   * free set, so a model that OpenCode retires mid-thread does not strand it.
+   *
+   * Throws when the free set is empty. The sentinel must never reach OpenCode,
+   * and the configured fallback is a paid model the user chose for something
+   * else, so neither forwarding nor falling back is right here.
+   */
+  const resolveFreeSelection = async ({ sessionId, directory, model, agent }) => {
+    if (sentinelModeOf(model) !== 'free') return null;
+    const mark = autoSessions.get(sessionId);
+    const models = await freeModels(directory);
+    let picked = mark?.picked && models.find((entry) => entry.providerID === mark.picked.providerID && entry.modelID === mark.picked.modelID);
+    if (!picked) {
+      picked = pickFreeModel(models);
+      if (!picked) {
+        throw Object.assign(new Error('Auto-free is selected but OpenCode has no free model available'), { status: 400 });
+      }
+    }
+    if (mark?.picked?.modelID !== picked.modelID || mark?.picked?.providerID !== picked.providerID) {
+      rememberAutoSession(sessionId, { directory: directory ?? null, mode: 'free', picked });
+    }
+    const decision = {
+      sessionId,
+      at: now(),
+      category: null,
+      confidence: 0,
+      reason: 'free-pick',
+      ms: 0,
+      providerID: picked.providerID,
+      modelID: picked.modelID,
+      variant: null,
+      agent: null,
+    };
+    broadcast('openchamber:routing.decision', decision);
+    return {
+      model: { providerID: picked.providerID, id: picked.modelID },
+      // Auto-free never chooses an agent: the composer keeps the one it has.
+      agent: agent || null,
+      decision,
+    };
+  };
+
+  /**
    * Resolves one send that named the Auto sentinel. Returns the model and
    * agent the send must use, or null when a real model was selected.
    *
@@ -290,7 +458,7 @@ export function createRoutingRuntime({
    * the sentinel must never reach OpenCode.
    */
   const resolveAutoSelection = async ({ sessionId, directory, model, agent, requestText }) => {
-    if (!isAutoModel(model)) return null;
+    if (sentinelModeOf(model) !== 'auto') return null;
     const state = await describe();
     const config = state.config;
     if (!config?.fallback) {
@@ -330,23 +498,44 @@ export function createRoutingRuntime({
     return { model: selection.model, agent: selection.agent, decision };
   };
 
+  /** Records a session as sitting on a sentinel, replacing any earlier mark. */
+  const rememberAutoSession = (sessionId, mark) => {
+    autoSessions.delete(sessionId);
+    autoSessions.set(sessionId, { ...mark, at: now() });
+    while (autoSessions.size > AUTO_SESSION_LIMIT) autoSessions.delete(autoSessions.keys().next().value);
+  };
+
   /**
-   * `POST /session/:id/model` with the sentinel puts the session on Auto;
-   * with any real model it takes it off again.
+   * `POST /session/:id/model` with a sentinel puts the session on it; with any
+   * real model it takes the session off again.
    */
   const noteModelSelection = (sessionId, model, directory) => {
     if (!sessionId) return false;
-    if (!isAutoModel(model)) {
+    const mode = sentinelModeOf(model);
+    if (!mode) {
       autoSessions.delete(sessionId);
       return false;
     }
-    autoSessions.delete(sessionId);
-    autoSessions.set(sessionId, { directory: directory ?? null, at: now() });
-    while (autoSessions.size > AUTO_SESSION_LIMIT) autoSessions.delete(autoSessions.keys().next().value);
+    // A fresh mark clears the pinned free model: picking Auto-free again is
+    // how the user asks for a different roll.
+    rememberAutoSession(sessionId, { directory: directory ?? null, mode, picked: null });
     return true;
   };
 
   const isAutoSession = (sessionId) => Boolean(sessionId) && autoSessions.has(sessionId);
+
+  /**
+   * Resolves any sentinel, whichever one the caller was handed. The send rewrite
+   * dispatches on the session's own mode; this is the entry point for callers
+   * that only have the model ref (the message queue, session goals) and cannot
+   * tell the two apart themselves.
+   */
+  const resolveSelection = async ({ sessionId, directory, model, agent, requestText }) => {
+    const mode = sentinelModeOf(model);
+    if (mode === 'free') return resolveFreeSelection({ sessionId, directory, model, agent });
+    if (mode === 'auto') return resolveAutoSelection({ sessionId, directory, model, agent, requestText });
+    return null;
+  };
 
   /** Switches the session onto a resolved selection, the way a v2 send does. */
   const applySessionSelection = async (sessionId, directory, selection) => {
@@ -356,17 +545,17 @@ export function createRoutingRuntime({
   };
 
   /**
-   * One send in a routed session: asks Jev on the request text, switches the
-   * session onto the answer, and keeps the body in step with it.
+   * One send in a routed session: resolves the model for it and switches the
+   * session onto it. Which sentinel the session is on decides how — Jev for
+   * `auto`, a free roll for `auto-free` — and both return the same shape.
    */
   const routeSend = async ({ sessionId, directory, body }) => {
-    const resolved = await resolveAutoSelection({
-      sessionId,
-      directory,
-      model: AUTO_MODEL_REF,
-      agent: agentBodySchema.safeParse(body).data?.agent ?? null,
-      requestText: requestTextOf(body),
-    });
+    const mode = autoSessions.get(sessionId)?.mode ?? 'auto';
+    const sentinel = mode === 'free' ? AUTO_FREE_MODEL_REF : AUTO_MODEL_REF;
+    const agent = agentBodySchema.safeParse(body).data?.agent ?? null;
+    const resolved = mode === 'free'
+      ? await resolveFreeSelection({ sessionId, directory, model: sentinel, agent })
+      : await resolveAutoSelection({ sessionId, directory, model: sentinel, agent, requestText: requestTextOf(body) });
     if (!resolved) return null;
     // v2 prompt and command bodies carry neither model nor agent: switching
     // the session is the whole application of the decision.
@@ -505,6 +694,8 @@ export function createRoutingRuntime({
     noteModelSelection,
     isAutoSession,
     resolveAutoSelection,
+    resolveFreeSelection,
+    resolveSelection,
     applySessionSelection,
     routeSend,
     evaluatePermission,

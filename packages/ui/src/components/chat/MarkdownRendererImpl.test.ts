@@ -169,6 +169,7 @@ const rendererThemes = [{
         surface: { elevated: '#fff', foreground: '#000', mutedForeground: '#666', muted: '#eee' },
         interactive: { border: '#ccc' },
         primary: { base: '#00f' },
+        status: { success: '#0a0', error: '#a00' },
     },
 }, {
     metadata: { id: 'renderer-test-next' },
@@ -176,6 +177,7 @@ const rendererThemes = [{
         surface: { elevated: '#eee', foreground: '#111', mutedForeground: '#555', muted: '#ddd' },
         interactive: { border: '#bbb' },
         primary: { base: '#f00' },
+        status: { success: '#0c0', error: '#b00' },
     },
 }];
 let rendererThemeIndex = 0;

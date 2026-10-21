@@ -16,8 +16,8 @@ import { dropdownTriggerVariants } from '@/components/ui/dropdown-trigger';
 import { selectProvidersForDirectory, useConfigStore } from '@/stores/useConfigStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { ModelPickerList, type ModelPickerEntry, type ModelPickerProvider } from '@/components/model-picker/ModelPickerList';
-import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, isAutoModel } from '@/lib/routing/autoModel';
-import { selectAutoReady, useRoutingStore } from '@/stores/useRoutingStore';
+import { AUTO_FREE_MODEL_ID, AUTO_MODEL_ID, AUTO_PROVIDER_ID, isAutoModel } from '@/lib/routing/autoModel';
+import { selectAutoReady, selectFreeAutoReady, useRoutingStore } from '@/stores/useRoutingStore';
 
 interface ModelSelectorProps {
     providerId: string;
@@ -61,9 +61,15 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 }) => {
     const { t } = useI18n();
     const autoReady = useRoutingStore(selectAutoReady);
-    const autoEntry = React.useMemo<ModelPickerEntry | null>(() => (offerAuto && autoReady
-        ? { providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID, model: { id: AUTO_MODEL_ID, name: t('chat.modelControls.autoModel') } }
-        : null), [autoReady, offerAuto, t]);
+    const freeAutoReady = useRoutingStore(selectFreeAutoReady);
+    const sentinelEntry = (id: string, name: string): ModelPickerEntry =>
+        ({ providerID: AUTO_PROVIDER_ID, modelID: id, model: { id, name } });
+    const leadingEntries = React.useMemo<ModelPickerEntry[]>(() => (offerAuto
+        ? [
+            ...(autoReady ? [sentinelEntry(AUTO_MODEL_ID, t('chat.modelControls.autoModel'))] : []),
+            ...(freeAutoReady ? [sentinelEntry(AUTO_FREE_MODEL_ID, t('chat.modelControls.autoFreeModel'))] : []),
+        ]
+        : []), [autoReady, freeAutoReady, offerAuto, t]);
     const isAutoSelected = isAutoModel(providerId, modelId);
     const { isReady, isUnavailable } = useOpenCodeReadiness('models', directory);
     const providers: ModelPickerProvider[] = useConfigStore((state) => directory === undefined
@@ -145,7 +151,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             onSelect={handleSelect}
             labels={labels}
             selectedModel={selectedModel}
-            leadingEntry={autoEntry}
+            leadingEntries={leadingEntries}
             hiddenModels={hiddenModels}
             allowedProviderIds={allowedProviderIds}
             isModelAllowed={isModelAllowed}

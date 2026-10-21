@@ -6,7 +6,9 @@ Jev model routing, the permission safety net, and the classification provider
 that answers both. With the `openchamber/auto` model selected, the server asks
 [Jev](https://docs.typesafe.ai) (TypeSafe's System One decision model) which
 task category a message belongs to and sends it with that category's model,
-thinking variant and agent. In a session whose permission mode is `safety`
+thinking variant and agent. With `openchamber/auto-free` selected it skips Jev
+entirely and runs on a model rolled at random from OpenCode's free tier. In a
+session whose permission mode is `safety`
 (`../permission-auto-accept/DOCUMENTATION.md`), the same kind of call decides
 whether a permission is accepted or stays on screen for the user.
 
@@ -18,7 +20,7 @@ Auto. There is no env gate — the feature shipped dark behind
 
 ## Files
 
-- `defaults.js` — the Auto sentinel, the Jev endpoints and models, the
+- `defaults.js` — the two sentinels, the free provider, the Jev endpoints and models, the
   `ZEN_JEV_PROMOTION_ACTIVE` switch, built-in categories, the question wording
   for routing and for the safety net, history excerpt limits.
 - `classifier.js` — the classification providers: `resolveClassifier` (the
@@ -43,7 +45,9 @@ Auto. There is no env gate — the feature shipped dark behind
 - `runtime.js` — `createRoutingRuntime`: `describe`, `classifierEndpoint` (the
   endpoint a Jev request goes to now, or null; also used by
   `../session-work` and `../session-goal`), `noteModelSelection`,
-  `isAutoSession`, `resolveAutoSelection`, `applySessionSelection`, `routeSend`,
+  `isAutoSession`, `resolveAutoSelection`, `resolveFreeSelection`,
+  `resolveSelection` (either sentinel, for callers holding only a model ref),
+  `freeModels`, `pickFreeModel`, `applySessionSelection`, `routeSend`,
   `evaluatePermission`, `legacySafetyNetEnabled`, config, token, classifier and
   custom endpoint writes, event broadcasts.
 - `routes.js` — `/api/routing` (GET, PUT), `/api/routing/token` (PUT, DELETE),
@@ -52,15 +56,16 @@ Auto. There is no env gate — the feature shipped dark behind
 
 ## Invariants
 
-- The sentinel never reaches OpenCode. OpenCode 2.x holds the model and agent
-  on the session and a prompt body carries only the user's text, so Auto is
-  per-session state: `POST /api/session` drops the sentinel from the create
+- The sentinel never reaches OpenCode. Either one. OpenCode 2.x holds the model
+  and agent on the session and a prompt body carries only the user's text, so a
+  sentinel is per-session state: `POST /api/session` drops it from the create
   body (the session starts on OpenCode's default; the first send switches it),
   `POST /api/session/:id/model` with the sentinel is
-  swallowed and marks the session (`noteModelSelection`), and every
+  swallowed and marks the session with its mode (`noteModelSelection`), and every
   `POST /api/session/:id/{prompt,command}` in a marked session is routed
   (`routeSend`) and switches the session onto the answer before the send is
-  forwarded. Both sit ahead of the generic proxy, which replays a parsed body.
+  forwarded. The mark holds which sentinel it was, because the two resolve in
+  entirely different ways. Both sit ahead of the generic proxy, which replays a parsed body.
   The message queue calls `resolveAutoSelection` itself and applies the answer
   with the model/agent switches it already makes. Without a fallback model the
   runtime throws 400 rather than forwarding. The OpenChamber session service
@@ -90,6 +95,43 @@ Auto. There is no env gate — the feature shipped dark behind
 - Auto is offered (`autoReady`) with a usable classification provider
   (`jevAvailable`), `enabled`, a fallback model and at least two enabled
   categories.
+- Auto-free is offered (`freeAutoReady`) exactly when `freeModels` is non-empty.
+  It reads no other part of the config: no classifier, no fallback, no
+  categories. `describe` reports it from a catalogue read without a `directory`,
+  because the endpoint takes none and the flag is only a boolean — the pick
+  itself is location-scoped, so a directory whose catalogue differs is decided
+  at send time, not here.
+- "Free" is read off the catalogue, never from a stored list: OpenCode rotates
+  the tier, and the roster on one install changed between two runs of the same
+  build. A model qualifies when every cost tier is exactly zero, it is active
+  and enabled, and it can call tools. Three exclusions are deliberate. A missing
+  `cost` array is **not** free — the catalogue does not know the price, and a
+  hand-configured local model looks exactly like that, so "we cannot tell" never
+  resolves to "cost nothing". `capabilities.tools === false` keeps image and
+  audio models out, since a free pick that cannot call tools is useless to an
+  agent. A repeated `modelID` is skipped, because several free models are listed
+  under more than one provider and would otherwise be twice as likely.
+- Auto-free skips the history read as well as Jev: it asks nothing, so it is
+  faster than Auto rather than slower.
+- The free roll is **per session**, not per send. A new model each turn would
+  mean a cold prompt cache every message and a visibly different voice inside
+  one transcript. The pinned model lives in the session mark and only moves when
+  OpenCode retires it out of the free tier, which would otherwise strand the
+  thread on a model the catalogue no longer offers.
+- With no free model the send fails with 400. The sentinel must never reach
+  OpenCode, and the configured fallback is a model the user chose for something
+  else and is usually paid — quietly spending their money out of a picker
+  labelled "free" is the one outcome worth refusing rather than papering over.
+- Auto-free honours `hiddenModels` from `preferences.json` (`hiddenModelRefs`,
+  read through `readMergedSettingsSync` the way `session-goal` reads its
+  toggles). It picks from the same catalogue the picker shows, so a "free"
+  choice that keeps returning a model the user hid is worse than not offering
+  the feature at all.
+- The free pool is scoped to `FREE_PROVIDER_ID` (`opencode`), whose models
+  authenticate with a public key and need no credential. `opencode-go` also
+  lists zero-cost models, but they are served by the Go subscription endpoint.
+  A sentinel is rejected as a routing target (`store.js`), so a category cannot
+  point at one and send the resolver into a loop.
 - Held permission decisions are cached for 15 minutes per request id so
   reconnect reconciliation in `permission-auto-accept` does not re-ask Jev;
   `permission.replied` forgets them.
@@ -185,10 +227,17 @@ limited time", and the keys are what users fall back to when it ends.
 ## Events
 
 Broadcast on the OpenChamber control stream: `openchamber:routing.updated`
-(availability, including `jevAvailable`), `openchamber:routing.decision` (per
-send), `openchamber:routing.permission-held`,
+(availability, including `jevAvailable` and `freeAutoReady`),
+`openchamber:routing.decision` (per send, `reason: 'free-pick'` for an
+Auto-free roll), `openchamber:routing.permission-held`,
 `openchamber:routing.safety-skipped`. The last two carry the request's
 directory so the UI can raise the permission toast for a held request.
+
+Both the event envelope and the client's zod schema (`openchamberEvents.ts`,
+`routingApi.ts`) pin `reason` to a literal union, so a new reason fails its
+parse and the event vanishes silently rather than erroring. `free-pick` is in
+all three. `freeAutoReady` defaults to false, which is how a server from before
+Auto-free reads.
 
 `/api/routing` keeps `jevSource` (`typesafe` or `zen-free`) for clients from
 before the classifier pick and adds `jevAvailable`, `classifier` and
@@ -204,12 +253,17 @@ Vercel or a custom endpoint is picked or answering (`legacyClassifier`). Current
 `packages/ui/src/stores/useRoutingStore.ts` projects `/api/routing` and these
 events (`selectSafetyNetAvailable` gates the safety-net mode everywhere);
 `hooks/useRoutingSync.ts` keeps it current, shows the skipped-check toast and
-raises the permission toast for a held request (`notifyHeldPermission`). `lib/routing/autoModel.ts` owns the sentinel; `useConfigStore` accepts it
-as a valid selection while `autoReady`. `ModelPickerList` renders it as the
-pinned `leadingEntry`; `ModelControls` hides the agent and thinking controls
-while Auto is selected. `PermissionCard` shows the hold reason. Settings →
+raises the permission toast for a held request (`notifyHeldPermission`). `lib/routing/autoModel.ts` owns the sentinels (`autoModeOf` says which, `isAutoModel` says whether); `useConfigStore` accepts one
+as a valid selection while the server says it is ready — Auto on `autoReady`,
+Auto-free on `freeAutoReady`, checked separately in `hasProviderModel`,
+`isStaleAutoSelection` and `setProvider`. `ModelPickerList` renders them as
+pinned `leadingEntries` (a list, so a second sentinel is a second row rather
+than a rewrite); `ModelControls` and `ModelSelector` build that list, and
+`ModelControls` hides the agent and thinking controls while Auto is selected.
+`PermissionCard` shows the hold reason. Settings →
 Routing (`components/sections/routing/RoutingPage.tsx`) edits the config with
-debounced saves. Settings → Providers → Classification providers
+debounced saves, and shows Auto-free as a status line only — there is nothing to
+configure, since the free tier is whatever OpenCode currently offers. Settings → Providers → Classification providers
 (`components/sections/classification/ClassificationProvidersPage.tsx`) picks
 the source and manages the TypeSafe key and, through `CustomEndpointFields.tsx`,
 the custom endpoint; `JevAccessNote` links there from the
@@ -222,6 +276,13 @@ file, token file mode, classifier pick, custom endpoint file), `runtime.test.js`
 excerpts, decisions, endpoints, custom URL normalization and setter,
 classifier fallback, rewrite and fallback
 paths, safety net accept/hold/skip/unavailable), `routes.http.test.js`
-(sentinel dropped from a create and swallowed on the model switch, routed send
-ahead of a stand-in proxy, the routes). The queue and auto-accept tests cover
-their hooks.
+(either sentinel dropped from a create and swallowed on the model switch,
+routed send ahead of a stand-in proxy, the routes). The queue and auto-accept
+tests cover their hooks.
+
+The Auto-free cases live in `runtime.test.js` under `resolveFreeSelection` (the
+pick, the per-session pin, re-rolling when the pinned model leaves the tier, the
+refusal with no free model) and `the free filter` (each exclusion above,
+`hiddenModels`, readiness with no classifier at all). They drive the runtime
+through injected `listCatalogModels`, `readHiddenModels` and `random`, so a roll
+is deterministic in a test.

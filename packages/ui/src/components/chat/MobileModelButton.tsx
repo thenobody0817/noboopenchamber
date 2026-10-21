@@ -4,7 +4,7 @@ import { useConfigStore } from '@/stores/useConfigStore';
 import { getModelDisplayName } from './mobileControlsUtils';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
 import { useI18n } from '@/lib/i18n';
-import { isAutoModel } from '@/lib/routing/autoModel';
+import { autoModeOf } from '@/lib/routing/autoModel';
 
 interface MobileModelButtonProps {
     onOpenModel: () => void;
@@ -18,10 +18,12 @@ export const MobileModelButton: React.FC<MobileModelButtonProps> = ({ onOpenMode
     const currentProviderId = useConfigStore((state) => model === undefined ? state.currentProviderId : model?.providerId);
     const providers = useConfigStore((state) => state.providers);
     const currentProvider = providers.find((provider) => provider.id === currentProviderId);
-    const isAuto = isAutoModel(currentProviderId, currentModelId);
-    const modelLabel = isAuto
-        ? t('chat.modelControls.autoModel')
-        : getModelDisplayName(currentProvider, currentModelId, t('chat.modelControls.selectModel'));
+    const autoMode = autoModeOf(currentProviderId, currentModelId);
+    const modelLabel = autoMode === 'free'
+        ? t('chat.modelControls.autoFreeModel')
+        : autoMode === 'auto'
+            ? t('chat.modelControls.autoModel')
+            : getModelDisplayName(currentProvider, currentModelId, t('chat.modelControls.selectModel'));
 
     return (
         <button
@@ -47,7 +49,7 @@ export const MobileModelButton: React.FC<MobileModelButtonProps> = ({ onOpenMode
             title={modelLabel}
         >
             <span className="flex h-full w-full min-w-0 items-center gap-1">
-                {currentProviderId && !isAuto ? (
+                {currentProviderId && !autoMode ? (
                     <ProviderLogo providerId={currentProviderId} className="size-4 flex-shrink-0" />
                 ) : null}
                 <span className="truncate">{modelLabel}</span>

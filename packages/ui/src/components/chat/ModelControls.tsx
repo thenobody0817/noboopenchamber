@@ -47,8 +47,8 @@ import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
 import { useOpenCodeReadiness } from '@/hooks/useOpenCodeReadiness';
 import { eventMatchesShortcut, getEffectiveShortcutCombo, normalizeCombo } from '@/lib/shortcuts';
 import { markStartupTrace } from '@/lib/startupTrace';
-import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, isAutoModel } from '@/lib/routing/autoModel';
-import { selectAutoReady, useRoutingStore } from '@/stores/useRoutingStore';
+import { AUTO_FREE_MODEL_ID, AUTO_MODEL_ID, AUTO_PROVIDER_ID, autoModeOf, isAutoModel } from '@/lib/routing/autoModel';
+import { selectAutoReady, selectFreeAutoReady, useRoutingStore } from '@/stores/useRoutingStore';
 import {
     findLatestUserModelChoice,
     shouldPreserveManualModelOverride,
@@ -446,13 +446,18 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     // Separate state for agent selector to avoid conflict with model selector
     const [isAgentSelectorOpen, setIsAgentSelectorOpen] = React.useState(false);
     const { favoriteModelsList, recentModelsList } = useModelLists();
-    // Auto routing: the server resolves `openchamber/auto` into a real model per
-    // send. Offered only while the server says it can honour it, in the main
-    // composer and in controlled selections (BTW) alike.
+    // Routing sentinels: the server resolves each into a real model before OpenCode
+    // sees it. Auto asks the classifier for a category; Auto-free rolls a model
+    // from the free tier. Each is offered only while the server says it can
+    // honour it, in the main composer and in controlled selections (BTW) alike.
     const autoReady = useRoutingStore(selectAutoReady);
-    const autoEntry = React.useMemo<ModelPickerEntry | null>(() => (autoReady
-        ? { providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID, model: { id: AUTO_MODEL_ID, name: t('chat.modelControls.autoModel') } }
-        : null), [autoReady, t]);
+    const freeAutoReady = useRoutingStore(selectFreeAutoReady);
+    const sentinelEntry = (id: string, name: string): ModelPickerEntry =>
+        ({ providerID: AUTO_PROVIDER_ID, modelID: id, model: { id, name } });
+    const leadingEntries = React.useMemo<ModelPickerEntry[]>(() => [
+        ...(autoReady ? [sentinelEntry(AUTO_MODEL_ID, t('chat.modelControls.autoModel'))] : []),
+        ...(freeAutoReady ? [sentinelEntry(AUTO_FREE_MODEL_ID, t('chat.modelControls.autoFreeModel'))] : []),
+    ], [autoReady, freeAutoReady, t]);
     const isAutoSelected = isAutoModel(currentProviderId, currentModelId);
 
     const { isMobile: deviceIsMobile } = useDeviceInfo();
@@ -745,10 +750,17 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                 return 'model-missing';
             }
 
-            const isAuto = isAutoModel(providerId, modelId);
-            if (isAuto && !selectAutoReady(useRoutingStore.getState())) {
+            // A sentinel is valid only while the server says it can honour it, and each
+            // one has its own readiness: Auto needs Jev and a fallback,
+            // Auto-free only needs a free model.
+            const autoMode = autoModeOf(providerId, modelId);
+            if (autoMode === 'auto' && !selectAutoReady(useRoutingStore.getState())) {
                 return 'provider-missing';
             }
+            if (autoMode === 'free' && !selectFreeAutoReady(useRoutingStore.getState())) {
+                return 'provider-missing';
+            }
+            const isAuto = autoMode !== null;
             const provider = providers.find(p => p.id === providerId);
             if (!provider && !isAuto) {
                 return 'provider-missing';
@@ -954,19 +966,23 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             return;
         }
 
-        // History can never say "Auto": the server replaces the sentinel with
-        // a real model before OpenCode stores the message. A saved Auto is the
-        // newer truth, so it wins over the model the last turn actually ran on.
-        // Until the routing state has loaded, Auto cannot be applied yet, so
-        // the restore stays pending instead of letting history overwrite it.
+        // History can never name a sentinel: the server replaces it with a real model
+        // before OpenCode stores the message. A saved sentinel is the newer
+        // truth, so it wins over the model the last turn actually ran on. Until
+        // the routing state has loaded, neither can be applied yet, so the
+        // restore stays pending instead of letting history overwrite it.
         const savedSessionModel = getSessionModelSelection(currentSessionId);
-        const savedAuto = Boolean(savedSessionModel) && isAutoModel(savedSessionModel!.providerId, savedSessionModel!.modelId);
-        if (savedAuto && isStaleAutoSelection(savedSessionModel!.providerId, savedSessionModel!.modelId)) {
-            // Auto saved under a server that could route; this one cannot.
+        const savedAutoMode = Boolean(savedSessionModel) && autoModeOf(savedSessionModel!.providerId, savedSessionModel!.modelId);
+        if (savedAutoMode && isStaleAutoSelection(savedSessionModel!.providerId, savedSessionModel!.modelId)) {
+            // Saved under a server that could route; this one cannot.
             useConfigStore.getState().dropStaleAutoSelection();
-        } else if (savedAuto) {
-            if (!autoReady) return;
-            tryApplyModelSelection(AUTO_PROVIDER_ID, AUTO_MODEL_ID, currentAgentName || undefined);
+        } else if (savedAutoMode) {
+            if (savedAutoMode === 'free' ? !freeAutoReady : !autoReady) return;
+            tryApplyModelSelection(
+                AUTO_PROVIDER_ID,
+                savedAutoMode === 'free' ? AUTO_FREE_MODEL_ID : AUTO_MODEL_ID,
+                currentAgentName || undefined,
+            );
             latestLoadedUserChoiceRestoreRef.current = restoreKey;
             return;
         } else if (shouldPreserveManualModelOverride({
@@ -1454,7 +1470,9 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
 
     const getCurrentModelDisplayName = () => {
         if (!currentModelId) return t('chat.modelControls.selectModel');
-        if (isAutoSelected) return t('chat.modelControls.autoModel');
+        if (isAutoSelected) return autoModeOf(currentProviderId, currentModelId) === 'free'
+            ? t('chat.modelControls.autoFreeModel')
+            : t('chat.modelControls.autoModel');
         return getModelDisplayName(displayCurrentModel, currentModelId) || t('chat.modelControls.selectModel');
     };
 
@@ -1966,10 +1984,10 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             );
         };
 
-        const mobileAutoEntry = autoEntry && (normalizedQuery.length === 0 || getModelDisplayName(autoEntry.model).toLowerCase().includes(normalizedQuery.toLowerCase()))
-            ? autoEntry
-            : null;
-        const hasResults = Boolean(mobileAutoEntry) || filteredFavorites.length > 0 || filteredRecents.length > 0 || filteredProviders.length > 0;
+        const mobileSentinelEntries = leadingEntries.filter((entry) =>
+            normalizedQuery.length === 0 || getModelDisplayName(entry.model).toLowerCase().includes(normalizedQuery.toLowerCase()),
+        );
+        const hasResults = mobileSentinelEntries.length > 0 || filteredFavorites.length > 0 || filteredRecents.length > 0 || filteredProviders.length > 0;
 
         return (
             <MobileOverlayPanel
@@ -2012,15 +2030,15 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                         </div>
                     )}
 
-                    {mobileAutoEntry ? (
+                    {mobileSentinelEntries.length > 0 ? (
                         <div className="rounded-xl border border-border/40 bg-[var(--surface-elevated)] overflow-hidden">
                             <div className="flex flex-col">
-                                {renderMobileModelRow({
-                                    model: mobileAutoEntry.model,
-                                    providerId: mobileAutoEntry.providerID,
-                                    modelId: mobileAutoEntry.modelID,
+                                {mobileSentinelEntries.map((entry) => renderMobileModelRow({
+                                    model: entry.model,
+                                    providerId: entry.providerID,
+                                    modelId: entry.modelID,
                                     showProviderLogo: false,
-                                })}
+                                }))}
                             </div>
                         </div>
                     ) : null}
@@ -2556,7 +2574,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                 onSelect={handleSharedModelSelect}
                                 labels={modelPickerLabels}
                                 selectedModel={currentProviderId && currentModelId ? { providerID: currentProviderId, modelID: currentModelId } : null}
-                                leadingEntry={autoEntry}
+                                leadingEntries={leadingEntries}
                                 leadingAction={onRunInParallel ? {
                                     label: t('chat.modelControls.runInParallel'),
                                     icon: <ArrowsMerge className="h-3.5 w-3.5 flex-shrink-0" />,

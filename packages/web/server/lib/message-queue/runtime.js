@@ -487,8 +487,10 @@ export function createMessageQueueRuntime({
     const promptFiles = item.attachments.map(toPromptFile);
     const contextMessages = item.context.flatMap(toContextMessages);
 
-    // Jev routing, when the queued send named the Auto sentinel. A failure
-    // inside resolves to the fallback model; only a missing fallback throws.
+    // Sentinel resolution, when the queued send named one. `auto` routes through
+    // Jev and falls back to the fallback model; `auto-free` rolls onto a free
+    // model. A failure inside the first resolves to the fallback; only a
+    // missing fallback, or an empty free tier, throws.
     const routed = await resolveAutoSelection?.({
       sessionId,
       directory,

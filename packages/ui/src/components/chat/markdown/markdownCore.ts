@@ -781,9 +781,9 @@ const highlightCodeBlocks = async (html: string): Promise<string> => {
     matches.map(async (match) => {
       const [full, rawLang, escapedCode] = match;
       const requested = (rawLang || 'text').toLowerCase();
-      // Leave mermaid fences untouched so the decorate pass can render them as
-      // diagrams (highlighting would strip the `language-mermaid` class).
-      if (requested === 'mermaid') return null;
+      // Leave mermaid and chart fences untouched so the decorate pass can render
+      // them as diagrams (highlighting would strip the `language-*` class).
+      if (requested === 'mermaid' || requested === 'chart') return null;
 
       const code = unescapeHtml(escapedCode ?? '');
 

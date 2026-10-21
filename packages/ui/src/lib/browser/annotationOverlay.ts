@@ -106,6 +106,48 @@ export const buildAnnotationOverlayScript = (
 
   // ------------------------------------------------------------- description
 
+  var viewOf = function (node) {
+    var doc = node && (node.nodeType === 9 ? node : node.ownerDocument);
+    return (doc && doc.defaultView) || window;
+  };
+
+  var getShadow = function (element) {
+    if (!element || element.nodeType !== 1) return null;
+    if (element.hasAttribute && element.hasAttribute(OVERLAY_ATTR)) return null;
+    if (element.shadowRoot) return element.shadowRoot;
+    try {
+      var win = viewOf(element);
+      var map = win && win.__openchamberShadowRoots;
+      if (map && typeof map.get === 'function') return map.get(element) || null;
+    } catch (error) {}
+    return null;
+  };
+
+  var getFrameDoc = function (element) {
+    if (!element || element.nodeType !== 1) return null;
+    var tag = element.tagName;
+    if (tag !== 'IFRAME' && tag !== 'FRAME') return null;
+    try {
+      var doc = element.contentDocument;
+      if (doc && doc.documentElement) return doc;
+    } catch (error) {}
+    return null;
+  };
+
+  var rectOfElement = function (element) {
+    var domRect = element.getBoundingClientRect();
+    var x = domRect.left;
+    var y = domRect.top;
+    var win = viewOf(element);
+    while (win && win.frameElement) {
+      var frameRect = win.frameElement.getBoundingClientRect();
+      x += frameRect.left;
+      y += frameRect.top;
+      win = viewOf(win.frameElement);
+    }
+    return { x: x, y: y, width: domRect.width, height: domRect.height };
+  };
+
   var isOverlayNode = function (element) {
     var node = element;
     while (node) {
@@ -116,7 +158,33 @@ export const buildAnnotationOverlayScript = (
   };
 
   var elementFromPoint = function (x, y) {
-    var found = document.elementFromPoint(x, y);
+    var currentX = x;
+    var currentY = y;
+    var found = document.elementFromPoint(currentX, currentY);
+    var guard = 0;
+    while (found && !isOverlayNode(found) && guard < 16) {
+      guard += 1;
+      var shadow = getShadow(found);
+      if (shadow && typeof shadow.elementFromPoint === 'function') {
+        var inner = shadow.elementFromPoint(currentX, currentY);
+        if (inner && inner !== found) {
+          found = inner;
+          continue;
+        }
+      }
+      var frameDoc = getFrameDoc(found);
+      if (frameDoc && typeof frameDoc.elementFromPoint === 'function') {
+        var frameRect = found.getBoundingClientRect();
+        currentX -= frameRect.left;
+        currentY -= frameRect.top;
+        var frameHit = frameDoc.elementFromPoint(currentX, currentY);
+        if (frameHit && frameHit !== found) {
+          found = frameHit;
+          continue;
+        }
+      }
+      break;
+    }
     if (!found || isOverlayNode(found)) return null;
     return found;
   };
@@ -124,6 +192,8 @@ export const buildAnnotationOverlayScript = (
   var selectorPart = function (element) {
     var part = element.tagName.toLowerCase();
     if (element.id) return part + '#' + element.id;
+    var testId = element.getAttribute && element.getAttribute('data-testid');
+    if (testId && String(testId).indexOf('"') === -1) return part + '[data-testid="' + testId + '"]';
     var className = typeof element.className === 'string' ? element.className.trim() : '';
     if (className) {
       var first = className.split(/\s+/).filter(Boolean).slice(0, 2).join('.');
@@ -132,12 +202,12 @@ export const buildAnnotationOverlayScript = (
     return part;
   };
 
-  var buildSelector = function (element) {
+  var buildLocalSelector = function (element, rootNode) {
     if (element.id) return '#' + element.id;
     var parts = [];
     var node = element;
     var depth = 0;
-    while (node && node.nodeType === 1 && depth < 5) {
+    while (node && node.nodeType === 1 && node !== rootNode && depth < 5) {
       var part = selectorPart(node);
       var parent = node.parentElement;
       if (parent) {
@@ -145,6 +215,11 @@ export const buildAnnotationOverlayScript = (
           return child.tagName === node.tagName;
         });
         if (siblings.length > 1) part += ':nth-of-type(' + (siblings.indexOf(node) + 1) + ')';
+      } else if (rootNode && rootNode.children) {
+        var rootSiblings = Array.prototype.filter.call(rootNode.children, function (child) {
+          return child.tagName === node.tagName;
+        });
+        if (rootSiblings.length > 1) part += ':nth-of-type(' + (rootSiblings.indexOf(node) + 1) + ')';
       }
       parts.unshift(part);
       if (node.id) break;
@@ -152,6 +227,19 @@ export const buildAnnotationOverlayScript = (
       depth += 1;
     }
     return parts.join(' > ');
+  };
+
+  var buildSelector = function (element) {
+    var rootNode = typeof element.getRootNode === 'function' ? element.getRootNode() : element.ownerDocument || document;
+    var local = buildLocalSelector(element, rootNode);
+    if (rootNode && rootNode.host) {
+      return buildSelector(rootNode.host) + ' >>> ' + local;
+    }
+    var win = element.ownerDocument && element.ownerDocument.defaultView;
+    if (win && win.frameElement) {
+      return buildSelector(win.frameElement) + ' >>> ' + local;
+    }
+    return local;
   };
 
   var INTERESTING_ATTRS = ['id', 'class', 'name', 'type', 'href', 'src', 'alt', 'title', 'role', 'placeholder', 'aria-label', 'data-testid'];
@@ -162,7 +250,7 @@ export const buildAnnotationOverlayScript = (
   ];
 
   var describe = function (element) {
-    var computed = window.getComputedStyle(element);
+    var computed = viewOf(element).getComputedStyle(element);
     var attributes = {};
     for (var i = 0; i < INTERESTING_ATTRS.length; i += 1) {
       var name = INTERESTING_ATTRS[i];
@@ -175,7 +263,7 @@ export const buildAnnotationOverlayScript = (
       computedStyle[prop] = String(computed[prop] == null ? '' : computed[prop]);
     }
     var ancestry = [];
-    var node = element.parentElement;
+    var node = element.parentElement || (element.getRootNode && element.getRootNode().host) || null;
     var depth = 0;
     while (node && node.nodeType === 1 && depth < 4) {
       var entry = { tag: node.tagName.toLowerCase(), selectorPart: selectorPart(node) };
@@ -183,18 +271,18 @@ export const buildAnnotationOverlayScript = (
       var cls = typeof node.className === 'string' ? node.className.trim() : '';
       if (cls) entry.className = cls.slice(0, 200);
       ancestry.unshift(entry);
-      node = node.parentElement;
+      node = node.parentElement || (node.getRootNode && node.getRootNode().host) || null;
       depth += 1;
     }
-    var box = element.getBoundingClientRect();
+    var box = rectOfElement(element);
     var text = (element.textContent == null ? '' : String(element.textContent)).replace(/\s+/g, ' ').trim();
     return {
       tag: element.tagName.toLowerCase(),
       text: text.slice(0, MAX_TEXT),
       selector: buildSelector(element),
       path: ancestry.map(function (e) { return e.selectorPart; }).concat([selectorPart(element)]).join(' > '),
-      bounds: rectFrom(box),
-      center: { x: box.left + box.width / 2, y: box.top + box.height / 2 },
+      bounds: box,
+      center: { x: box.x + box.width / 2, y: box.y + box.height / 2 },
       attributes: attributes,
       computedStyle: computedStyle,
       ancestry: ancestry
@@ -363,7 +451,7 @@ export const buildAnnotationOverlayScript = (
 
   var syncSelectionVisuals = function () {
     if (!selected) return;
-    var rect = rectFrom(selected.element.getBoundingClientRect());
+    var rect = rectOfElement(selected.element);
     if (!usableRect(rect)) {
       selected.outline.style.display = 'none';
       selected.badge.style.display = 'none';
@@ -442,7 +530,7 @@ export const buildAnnotationOverlayScript = (
       hoverLabel.style.display = 'none';
       return;
     }
-    var rect = rectFrom(element.getBoundingClientRect());
+    var rect = rectOfElement(element);
     positionBox(hoverBox, rect);
     hoverLabel.textContent = selectorPart(element);
     hoverLabel.style.display = 'block';

@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, isAutoModel } from '@/lib/routing/autoModel';
-import { selectAutoReady, useRoutingStore } from '@/stores/useRoutingStore';
+import { AUTO_FREE_MODEL_ID, AUTO_MODEL_ID, AUTO_PROVIDER_ID, autoModeOf, isAutoModel } from '@/lib/routing/autoModel';
+import { selectAutoReady, selectFreeAutoReady, useRoutingStore } from '@/stores/useRoutingStore';
 import type { StoreApi, UseBoundStore } from "zustand";
 import { devtools, persist } from "zustand/middleware";
 import { findCatalogModel, type Provider, type Model, type Agent, type Config } from "@/lib/opencode/model";
@@ -219,10 +219,12 @@ const hasProviderModel = (
     providerId: string,
     modelId: string
 ): boolean => {
-    // Auto is not a provider OpenCode reports; it is a valid selection exactly
-    // while the server says routing can honour it.
-    if (isAutoModel(providerId, modelId)) {
-        return selectAutoReady(useRoutingStore.getState());
+    // The sentinels are not providers OpenCode reports; each is a valid
+    // selection exactly while the server says it can honour it.
+    const autoMode = autoModeOf(providerId, modelId);
+    if (autoMode) {
+        const routing = useRoutingStore.getState();
+        return autoMode === 'free' ? selectFreeAutoReady(routing) : selectAutoReady(routing);
     }
     const provider = providers.find((item) => item.id === providerId);
     if (!provider) {
@@ -232,19 +234,20 @@ const hasProviderModel = (
 };
 
 /**
- * An `openchamber/auto` selection that this server cannot honour. Auto is a
- * valid choice only while the server says routing is available and ready;
- * a selection saved under another build (or before the token was removed)
- * must not be kept, or the sentinel would be sent to OpenCode as a model.
- * Unknown readiness (settings or the routing state not loaded yet) keeps the
- * selection, so a real Auto choice survives startup.
+ * A sentinel selection that this server cannot honour. Each is a valid choice
+ * only while the server says it is ready; a selection saved under another build
+ * (or before the token was removed) must not be kept, or the sentinel would be
+ * sent to OpenCode as a model. Unknown readiness (settings or the routing state
+ * not loaded yet) keeps the selection, so a real choice survives startup.
  */
 export const isStaleAutoSelection = (providerId?: string | null, modelId?: string | null): boolean => {
-    if (!providerId || !modelId || !isAutoModel(providerId, modelId)) return false;
+    const mode = autoModeOf(providerId, modelId);
+    if (!mode) return false;
     if (!useConfigStore.getState().settingsDefaultsLoaded) return false;
     if (!useUIStore.getState().routingFeatureAvailable) return true;
     const routing = useRoutingStore.getState();
-    return routing.loaded && !selectAutoReady(routing);
+    if (!routing.loaded) return false;
+    return mode === 'free' ? !selectFreeAutoReady(routing) : !selectAutoReady(routing);
 };
 
 const resolveProviderModelSelection = ({
@@ -2224,14 +2227,18 @@ export const useConfigStore = create<ConfigStore>()(
                 setProvider: (providerId: string) => {
                     const { providers } = get();
                     const provider = providers.find((p) => p.id === providerId);
-                    const isAuto = providerId === AUTO_PROVIDER_ID && hasProviderModel(providers, AUTO_PROVIDER_ID, AUTO_MODEL_ID);
+                    // The sentinel provider holds both sentinels; whichever the server says is
+                    // ready is the one a provider switch lands on.
+                    const sentinelId = providerId === AUTO_PROVIDER_ID && hasProviderModel(providers, AUTO_PROVIDER_ID, AUTO_FREE_MODEL_ID)
+                        ? AUTO_FREE_MODEL_ID
+                        : hasProviderModel(providers, AUTO_PROVIDER_ID, AUTO_MODEL_ID) ? AUTO_MODEL_ID : null;
  
-                    if (!provider && !isAuto) {
+                    if (!provider && !sentinelId) {
                         return;
                     }
  
                     const firstModel = provider?.models[0];
-                    const newModelId = isAuto ? AUTO_MODEL_ID : (firstModel?.modelID || "");
+                    const newModelId = sentinelId ?? (firstModel?.modelID || "");
  
                     set((state) => {
                         const directoryKey = state.activeDirectoryKey;

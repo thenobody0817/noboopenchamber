@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { registerRoutingPromptRewrite, registerRoutingRoutes } from './routes.js';
 
+/** Both sentinels the rewrite has to swallow instead of forwarding. */
+const SENTINEL_IDS = ['auto', 'auto-free'];
+
 /**
  * The send rewrite sits in front of the generic OpenCode proxy, which replays
  * `req.body` when a middleware parsed it. These tests mount the rewrite ahead
@@ -13,10 +16,10 @@ const createApp = ({ routeSend, autoSessions = new Set() } = {}) => {
   const forwarded = [];
   const runtime = {
     noteModelSelection: vi.fn((sessionId, model) => {
-      const auto = model?.providerID === 'openchamber' && model?.id === 'auto';
-      if (auto) autoSessions.add(sessionId);
+      const sentinel = model?.providerID === 'openchamber' && SENTINEL_IDS.includes(model?.id);
+      if (sentinel) autoSessions.add(sessionId);
       else autoSessions.delete(sessionId);
-      return auto;
+      return sentinel;
     }),
     isAutoSession: (sessionId) => autoSessions.has(sessionId),
     routeSend: routeSend ?? vi.fn(async ({ body }) => {
@@ -64,7 +67,18 @@ describe('routing send rewrite', () => {
     expect(runtime.isAutoSession('s1')).toBe(true);
   });
 
-  it('drops the Auto sentinel from a session create so OpenCode never stores it', async () => {
+  it('swallows the Auto-free sentinel too, and marks the session for it', async () => {
+    const { app, runtime, forwarded } = createApp();
+    await request(app)
+      .post('/api/session/s1/model?directory=%2Frepo')
+      .send({ model: { providerID: 'openchamber', id: 'auto-free' } })
+      .expect(204);
+    expect(forwarded).toEqual([]);
+    expect(runtime.noteModelSelection).toHaveBeenCalledWith('s1', { providerID: 'openchamber', id: 'auto-free' }, '/repo');
+    expect(runtime.isAutoSession('s1')).toBe(true);
+  });
+
+  it('drops a sentinel from a session create so OpenCode never stores it', async () => {
     const { app, forwarded, runtime } = createApp();
     await request(app)
       .post('/api/session?directory=%2Frepo')
@@ -73,8 +87,14 @@ describe('routing send rewrite', () => {
     expect(forwarded).toEqual([{ path: '/session', parsed: true, body: { title: 'btw', agent: 'build' } }]);
     expect(runtime.noteModelSelection).not.toHaveBeenCalled();
 
+    await request(app)
+      .post('/api/session')
+      .send({ model: { providerID: 'openchamber', id: 'auto-free' } })
+      .expect(204);
+    expect(forwarded[1]).toEqual({ path: '/session', parsed: true, body: {} });
+
     await request(app).post('/api/session').send({ model: { providerID: 'anthropic', id: 'claude-opus-5' } }).expect(204);
-    expect(forwarded[1]).toEqual({ path: '/session', parsed: true, body: { model: { providerID: 'anthropic', id: 'claude-opus-5' } } });
+    expect(forwarded[2]).toEqual({ path: '/session', parsed: true, body: { model: { providerID: 'anthropic', id: 'claude-opus-5' } } });
   });
 
   it('forwards a real model switch untouched and takes the session off Auto', async () => {

@@ -209,6 +209,7 @@ export const RoutingPage: React.FC = () => {
   const { t } = useI18n();
   const available = useRoutingStore((state) => state.available);
   const autoReady = useRoutingStore((state) => state.autoReady);
+  const freeAutoReady = useRoutingStore((state) => state.freeAutoReady);
   const serverConfig = useRoutingStore((state) => state.config);
   const builtins = useRoutingStore((state) => state.builtins);
   const loaded = useRoutingStore((state) => state.loaded);
@@ -351,6 +352,12 @@ export const RoutingPage: React.FC = () => {
             ? t('settings.routing.status.ready')
             : t('settings.routing.status.notReady');
 
+  // Auto-free is independent of everything above: no classifier, no fallback,
+  // no categories. It is offered exactly when the free tier has a model.
+  const freeAutoText = freeAutoReady
+      ? t('settings.routing.free.status.ready')
+      : t('settings.routing.free.status.notReady');
+
   return (
     <SettingsPageLayout
       title={t('settings.page.routing.title')}
@@ -403,6 +410,12 @@ export const RoutingPage: React.FC = () => {
                 />
               </SettingsFieldRow>
             </div>
+          </SettingsSection>
+
+          {/* Nothing to configure here: the free tier is whatever OpenCode
+              currently offers, so this is a status line and nothing more. */}
+          <SettingsSection title={t('settings.routing.free.title')} divider={false}>
+            <p className={SETTINGS_HELPER_CLASS}>{freeAutoText}</p>
           </SettingsSection>
 
           <SettingsSection title={t('settings.routing.categories.title')}>

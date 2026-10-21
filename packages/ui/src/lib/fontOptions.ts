@@ -1,4 +1,4 @@
-export type UiFontOption = 'inter' | 'fixel' | 'geist-sans' | 'atkinson-hyperlegible' | 'source-sans-3' | 'roboto' | 'noto-sans' | 'dm-sans' | 'manrope' | 'system';
+export type UiFontOption = 'inter' | 'fixel' | 'geist-sans' | 'atkinson-hyperlegible' | 'source-sans-3' | 'roboto' | 'noto-sans' | 'dm-sans' | 'manrope' | 'google-sans-flex' | 'system';
 
 export type MonoFontOption = 'jetbrains-mono' | 'fira-code' | 'geist-mono' | 'commit-mono' | 'source-code-pro' | 'cascadia-code' | 'roboto-mono' | 'iosevka' | 'system-mono';
 
@@ -98,6 +98,17 @@ export const UI_FONT_OPTIONS: FontOptionDefinition<UiFontOption>[] = [
         description: 'Polished geometric sans-serif for modern app interfaces.',
         stack: '"Manrope", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         source: { family: 'Manrope', packageName: '@fontsource/manrope', filePrefix: 'manrope', weights: [400, 500, 600] }
+    },
+    {
+        // No `source`: this font ships with the Caelestia shell and is expected
+        // to be installed system-wide already, so the local family is used
+        // directly rather than fetched. `stack` still falls back to the rest of
+        // the chain if it is missing, so an uninstalled system degrades to the
+        // system font instead of rendering nothing.
+        id: 'google-sans-flex',
+        label: 'Google Sans Flex',
+        description: "The Caelestia shell's interface font. Requires the font installed on the system.",
+        stack: '"Google Sans Flex", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif'
     },
     {
         id: 'system',

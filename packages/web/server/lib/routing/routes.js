@@ -9,9 +9,9 @@
  * first (`POST /session/:id/model`) and sends afterwards. So the rewrite is in
  * two halves:
  *
- * - `POST /session/:id/model` with `openchamber/auto` never reaches OpenCode,
- *   which has no such provider. It marks the session as routed and answers as
- *   a switch would.
+ * - `POST /session/:id/model` with a sentinel (`openchamber/auto` or
+ *   `openchamber/auto-free`) never reaches OpenCode, which has no such
+ *   provider. It marks the session as routed and answers as a switch would.
  * - `POST /session/:id/{prompt,command}` in a routed session asks Jev on the
  *   request text and switches the session onto the chosen model and agent
  *   before the prompt is forwarded.
